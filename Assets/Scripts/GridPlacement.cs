@@ -5,6 +5,7 @@ public class GridPlacement : MonoBehaviour
     public GameObject cubePrefab;
     private GameObject _previewCube;
     private GameObject _previewShip;
+    private Transform _interactionCube;
     private Transform _airshipParent;
     public Material previewMaterial; 
     public LayerMask placementLayer; // The layers we can player on
@@ -116,12 +117,14 @@ public class GridPlacement : MonoBehaviour
 
         if (Input.GetMouseButtonDown(0)) // Left mouse click
         {
+            editObject.SetActive(true);
             editObject.transform.position = _previewShip.transform.position;
             if (_airshipParent != null)
             {
-                foreach (Transform child in editObject.transform)
-                {
-                    child.SetParent(_airshipParent, false);
+                while (editObject.transform.childCount > 0) { // Set the all the children to the new airship
+                    Transform child = editObject.transform.GetChild(editObject.transform.childCount - 1);
+                    child.SetParent(_airshipParent);
+                    child.gameObject.layer = LayerMask.NameToLayer("Preview");
                 }
                 Destroy(editObject);
             }
