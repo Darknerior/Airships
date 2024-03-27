@@ -4,11 +4,30 @@ public class GridPlacement : MonoBehaviour
 {
     public GameObject cubePrefab;
     private GameObject _previewCube;
+    private GameObject _previewShip;
     private Transform _airshipParent;
     public Material previewMaterial; 
     public LayerMask placementLayer; // The layers we can player on
     private readonly LayerMask _airshipLayer = 3; // Layer 3 for airships
     private BoxCollider _boxCollider;
+
+    // Value holders for editing
+    public GameObject editObject;
+    private Vector3 pivotOffset;
+    private Vector3 originalPosition;
+
+    // Temp keybinds
+    public KeyCode place;
+    public KeyCode edit;
+    public KeyCode cancel;
+    public PlaceState state;
+    
+    public enum PlaceState {
+        nothing,
+        place,
+        editCube,
+        editShip
+    };
 
     private void Start() {
         _previewCube = Instantiate(cubePrefab, Vector3.zero, Quaternion.identity);
@@ -20,25 +39,161 @@ public class GridPlacement : MonoBehaviour
 
     private void Update() {
         var ray = Camera.main.ScreenPointToRay(Input.mousePosition);
-        if (Physics.Raycast(ray, out RaycastHit hit, Mathf.Infinity, placementLayer))
-        {
-            _previewCube.SetActive(true);
+        if (Physics.Raycast(ray, out RaycastHit hit, Mathf.Infinity, placementLayer)) {
+            StateManager();
 
-            // Adjust position to either ground hit or snap point
-            var placementPosition = CalculatePlacementPosition(hit);
-
-            _previewCube.transform.position = placementPosition;
-            _previewCube.transform.rotation = Quaternion.identity; // Reset rotation or set to snap point rotation
-
-            if (Input.GetMouseButtonDown(0)) // Left mouse click
-            {
-                // Instantiate the actual object
-                var placedObject = Instantiate(cubePrefab, placementPosition, Quaternion.identity);
-                placedObject.layer = _airshipLayer; // Set to airship layer
-                placedObject.transform.parent = _airshipParent != null ? _airshipParent : new GameObject("Airship").transform;//Set parent
+            switch (state) { // What to do in each place state
+                case PlaceState.place: PlaceCube(hit); break;
+                case PlaceState.editCube: EditCube(hit); break;
+                case PlaceState.editShip: EditShip(hit); break;
             }
         }
         else _previewCube.SetActive(false);
+    }
+
+    private void StateManager(){
+        if (Input.GetKeyDown(cancel)) {
+            if (state == PlaceState.editShip) CancelShipEdit();
+            if (state == PlaceState.editCube) CancelEdit();
+            if (state == PlaceState.place) CancelPlace();
+
+
+            state = PlaceState.nothing;
+            return;
+        }
+        if (Input.GetKeyDown(place) && state == PlaceState.nothing) {
+            if (state == PlaceState.place) {
+                CancelPlace();
+                return;
+            }
+
+            state = PlaceState.place;
+            return;
+        }
+        if (Input.GetKeyDown(edit)) {
+            if (state == PlaceState.editShip){
+                CancelShipEdit();
+                return;
+            }
+
+            if (state == PlaceState.editCube)
+            {
+                // Get the offset between the ship and the selected block for convenient movement
+                pivotOffset = editObject.transform.position - editObject.transform.parent.position;
+                editObject.SetActive(true);
+                editObject = editObject.transform.parent.gameObject;
+                editObject.SetActive(false);
+                _previewCube.SetActive(false);
+                state = PlaceState.editShip;
+                return;
+            }
+
+            if (state == PlaceState.nothing) {
+                state = PlaceState.editCube;
+                return;
+            }
+        }
+    }
+
+    private void EditShip(RaycastHit hit) {
+        var placementPosition = CalculatePlacementPosition(hit);
+        if (_previewShip == null)
+        {
+            // Generate a preview of the ship
+            _previewShip = Instantiate(editObject);
+            _previewShip.SetActive(true);
+            _previewShip.name = "preview";
+            foreach (Transform child in _previewShip.transform)
+            {
+                child.gameObject.layer = LayerMask.NameToLayer("Preview");
+
+                SetPreviewOpacity(child.gameObject, previewMaterial);
+            }
+        }
+
+        _previewShip.transform.position = placementPosition - pivotOffset; // Offset the position of the preview to align with the look position
+        _previewShip.transform.rotation = Quaternion.identity;
+
+        if (Input.GetMouseButtonDown(0)) // Left mouse click
+        {
+            editObject.transform.position = _previewShip.transform.position;
+            if (_airshipParent != null)
+            {
+                foreach (Transform child in editObject.transform)
+                {
+                    child.SetParent(_airshipParent, false);
+                }
+                Destroy(editObject);
+            }
+            CancelShipEdit();
+        }
+    }
+
+    private void EditCube(RaycastHit hit) {
+        GameObject hitObject = hit.transform.gameObject;
+
+        if (editObject == null && hitObject.transform.CompareTag("Moveable")) {
+            editObject = hitObject;
+            _airshipParent = editObject.transform.parent;
+        } 
+        else if (editObject == null) {
+            state = PlaceState.nothing;
+            return;
+        }
+
+        editObject.SetActive(false);
+        PlaceCube(hit);
+        return;
+    }
+
+    private void CancelEdit() {
+        editObject.SetActive(true);
+        editObject = null;
+        _previewCube.SetActive(false);
+        state = PlaceState.nothing;
+    }
+
+    private void CancelShipEdit() {
+        Destroy(_previewShip);
+        _previewShip = null;
+        editObject.SetActive(true);
+        editObject = null;
+        state = PlaceState.nothing;
+    }
+
+    private void CancelPlace() {
+        _previewCube.SetActive(false);
+        state = PlaceState.nothing;
+    }
+
+    private void PlaceCube(RaycastHit hit) {
+        _previewCube.SetActive(true);
+
+        // Adjust position to either ground hit or snap point
+        var placementPosition = CalculatePlacementPosition(hit);
+
+        _previewCube.transform.position = placementPosition;
+        _previewCube.transform.rotation = Quaternion.identity; // Reset rotation or set to snap point rotation
+
+        if (Input.GetMouseButtonDown(0)) // Left mouse click
+        {
+            // Instantiate the actual object or use the edited cube
+            var placedObject = editObject;
+
+            if (editObject == null) {
+                placedObject = Instantiate(cubePrefab, placementPosition, Quaternion.identity);
+                placedObject.transform.tag = "Moveable";
+            }
+            else {
+                placedObject.SetActive(true);
+                placedObject.transform.position = placementPosition;
+                placedObject.transform.rotation = Quaternion.identity;
+                CancelEdit();
+            }
+
+            placedObject.layer = _airshipLayer; // Set to airship layer
+            placedObject.transform.parent = _airshipParent != null ? _airshipParent : new GameObject("Airship").transform;//Set parent
+        }
     }
 
     private Vector3 CalculatePlacementPosition(RaycastHit hit) {
@@ -46,7 +201,8 @@ public class GridPlacement : MonoBehaviour
         
         // Check if hit object is part of the airship and find the closest snap point if applicable
         if (hit.collider.gameObject.layer == _airshipLayer) {
-            _airshipParent = hit.collider.gameObject.transform.parent;
+            // If block editing is going on make sure the airship is correct
+            _airshipParent = hit.transform.parent;
             var closestSnapPoint = GetClosestSnapPoint(hit.point, hit.collider.gameObject);
             if (closestSnapPoint != null)
             {
