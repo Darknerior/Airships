@@ -1,4 +1,5 @@
 using UnityEngine;
+using System.Collections.Generic;
 
 public class GridPlacement : MonoBehaviour
 {
@@ -10,7 +11,32 @@ public class GridPlacement : MonoBehaviour
     private readonly LayerMask _airshipLayer = 3; // Layer 3 for airships
     private BoxCollider _boxCollider;
 
+    private Dictionary<GameObject, Block> blocks; // Integer is the id of the block
+
+    struct Block {
+        public GameObject front;
+        public GameObject back;
+        public GameObject left;
+        public GameObject right;
+        public GameObject up;
+        public GameObject down;
+
+        public void SetFace(int faceID, GameObject attachedBlock)
+        {
+            switch (faceID)
+            {
+                case 1: front = attachedBlock; break;
+                case 2: back = attachedBlock; break;
+                case 3: left = attachedBlock; break;
+                case 4: right = attachedBlock; break;
+                case 5: up = attachedBlock; break;
+                case 6: down = attachedBlock; break;
+            }
+        }
+    }
+
     private void Start() {
+        blocks = new Dictionary<GameObject, Block>();
         _previewCube = Instantiate(cubePrefab, Vector3.zero, Quaternion.identity);
         SetPreviewOpacity(_previewCube, previewMaterial);
         _previewCube.SetActive(false);
@@ -33,9 +59,12 @@ public class GridPlacement : MonoBehaviour
             if (Input.GetMouseButtonDown(0)) // Left mouse click
             {
                 // Instantiate the actual object
-                var placedObject = Instantiate(cubePrefab, placementPosition, Quaternion.identity);
-                placedObject.layer = _airshipLayer; // Set to airship layer
-                placedObject.transform.parent = _airshipParent != null ? _airshipParent : new GameObject("Airship").transform;//Set parent
+                Transform parent = _airshipParent != null ? _airshipParent : new GameObject("Airship").transform;
+                Vector2Int faceID = CalculateFaceID(hit.normal, hit.transform);
+                var placedObject = CreateBlock(cubePrefab, placementPosition, Vector3.zero, parent);
+                blocks[placedObject].SetFace(faceID.x, hit.transform.gameObject); // Set the attached block for the newly placed block
+                if (_airshipParent == parent) // If we place on the ground you cant change this
+                    blocks[hit.transform.gameObject].SetFace(faceID.y, placedObject); // Set the attached block for the block the newly placed block is on
             }
         }
         else _previewCube.SetActive(false);
@@ -112,5 +141,39 @@ public class GridPlacement : MonoBehaviour
         if (!obj.TryGetComponent(out Renderer renderer)) return;
         var cloneMat = new Material(previewMat);
         renderer.material = cloneMat;
+    }
+
+    private GameObject CreateBlock(GameObject prefab, Vector3 position, Vector3 rotation, Transform parent)
+    {
+        GameObject blockObject = Instantiate(prefab, position, Quaternion.Euler(rotation), parent);
+        blockObject.layer = _airshipLayer;
+        Block block = new Block();
+        blocks.Add(blockObject, block);
+        return blockObject;
+    }
+
+    private Vector2Int CalculateFaceID(Vector3 normal, Transform hitObject)
+    {
+        float[] dotProductArray = new float[8];
+        float maxDot = 0;
+
+        dotProductArray[0] = Vector3.Dot(hitObject.forward, normal); // Front face
+        dotProductArray[1] = Vector3.Dot(-hitObject.forward, normal); // Back face
+        dotProductArray[2] = Vector3.Dot(-hitObject.right, normal); //  Left face
+        dotProductArray[3] = Vector3.Dot(hitObject.right, normal); // Right face
+        dotProductArray[4] = Vector3.Dot(hitObject.up, normal); // Upper face
+        dotProductArray[5] = Vector3.Dot(-hitObject.up, normal); // Downwards face
+
+        for (int i = 0; i < 6; i++) {
+            Mathf.Max(dotProductArray[i], maxDot);
+        }
+
+        if (maxDot == dotProductArray[0]) return new Vector2Int(1, 2);
+        if (maxDot == dotProductArray[1]) return new Vector2Int(2, 1);
+        if (maxDot == dotProductArray[2]) return new Vector2Int(3, 4);
+        if (maxDot == dotProductArray[3]) return new Vector2Int(4, 3);
+        if (maxDot == dotProductArray[4]) return new Vector2Int(5, 6);
+        if (maxDot == dotProductArray[5]) return new Vector2Int(6, 5);
+        return new Vector2Int(0, 0);
     }
 }
