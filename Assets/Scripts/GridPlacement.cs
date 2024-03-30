@@ -143,7 +143,7 @@ public class GridPlacement : MonoBehaviour
         var placementPosition = CalculatePlacementPosition(hit);
 
         _previewCube.transform.position = placementPosition;
-        _previewCube.transform.rotation = Quaternion.identity; // Reset rotation or set to snap point rotation
+        _previewCube.transform.rotation = hit.transform.rotation; // Reset rotation or set to snap point rotation
 
         if (Input.GetMouseButtonDown(0)) // Left mouse click
         {
@@ -158,7 +158,7 @@ public class GridPlacement : MonoBehaviour
             var placedObject = editObject;
 
             if (editObject == null) {
-                placedObject = CreateBlock(cubePrefab, placementPosition, Vector3.zero, parent);
+                placedObject = CreateBlock(cubePrefab, placementPosition, hit.transform.rotation, parent);
                 placedObject.transform.tag = "Moveable";
             }
             else {
@@ -191,31 +191,19 @@ public class GridPlacement : MonoBehaviour
             {
                 // If a snap point is found, set pos
                 placementPosition = closestSnapPoint.position;
-                if (_previewCube.TryGetComponent(out Collider collider))
+                if (_previewCube.TryGetComponent(out BoxCollider collider))
                 {
-                    var hitNormal = hit.normal.normalized;
+                    var hitNormal = hit.normal;
+                    var extents = collider.size * 0.5f;
 
-                    // Determine if we are snapping to the top or the side based on the hit normal
-                    var isTopSnap = Mathf.Approximately(hitNormal.y, 1f);
-
-                    if (isTopSnap) {
-                        // Top snap, adjust by half the height of the object
-                        var heightOffset = collider.bounds.extents.y;
-                        placementPosition += new Vector3(0, heightOffset, 0);
-                    }
-                    else {
-                        // Side snap, adjust by the collider extents in the direction of the hit normal
-                        // This finds the appropriate offset to move the preview object's side to the hit point's location.
-                        var sideOffset = new Vector3(
-                            hitNormal.x * collider.bounds.extents.x,
-                            hitNormal.y * collider.bounds.extents.y,
-                            hitNormal.z * collider.bounds.extents.z
-                        );
-                        placementPosition += sideOffset;
-                        // If snapping to the side, you might also need to adjust vertically if your objects
-                        // can be attached at different vertical positions (this depends on your game's mechanics)
-                        if (!Mathf.Approximately(hitNormal.y, 0f)) placementPosition += new Vector3(0, collider.bounds.extents.y * hitNormal.y, 0);
-                    }
+                    // Adjust the placement position by half the placed objects size in the hits normal direction 
+                    var sideOffset = new Vector3(
+                        hitNormal.x * extents.x,
+                        hitNormal.y * extents.y,
+                        hitNormal.z * extents.z
+                    );
+                    
+                    placementPosition += sideOffset;
                 }
             }
         }
@@ -253,17 +241,15 @@ public class GridPlacement : MonoBehaviour
         renderer.material = cloneMat;
     }
 
-    private GameObject CreateBlock(GameObject prefab, Vector3 position, Vector3 rotation, Transform parent)
-    {
-        GameObject blockObject = Instantiate(prefab, position, Quaternion.Euler(rotation), parent);
+    private GameObject CreateBlock(GameObject prefab, Vector3 position, Quaternion rotation, Transform parent) {
+        GameObject blockObject = Instantiate(prefab, position, rotation, parent);
         blockObject.layer = _airshipLayer;
         Block block = new Block();
         blocks.Add(blockObject, block);
         return blockObject;
     }
 
-    private Vector2Int CalculateFaceID(Vector3 normal, Transform hitObject)
-    {
+    private Vector2Int CalculateFaceID(Vector3 normal, Transform hitObject) {
         float[] angleArray = new float[8];
         float minAngle = 0;
 
@@ -289,8 +275,11 @@ public class GridPlacement : MonoBehaviour
         return new Vector2Int(0, 0); // If its nothing return 0, 0 (not possible)
     }
 
-    private void ShipCheck()
-    {
+    private void SidesCheck(GameObject checkObject) {
+
+    }
+
+    private void ShipCheck() {
         List<GameObject> blocksLeft = new();
         List<GameObject> shipParts = new();
         foreach (GameObject key in blocks.Keys) {
@@ -321,16 +310,14 @@ public class GridPlacement : MonoBehaviour
             shipIndex++;
         }
 
-        for (int i = shipIndex; i < shipIndex + addedShips; i++)
-        {
+        for (int i = shipIndex; i < shipIndex + addedShips; i++) {
             Transform removedShip = activeAirships[i];
             activeAirships.Remove(removedShip);
             Destroy(removedShip.gameObject); // Destroy the excess ship parents
         }
     }
 
-    private void FloodFill (ref List<GameObject> blocksLeft, ref List<GameObject> shipParts, GameObject checkObject)
-    {
+    private void FloodFill(ref List<GameObject> blocksLeft, ref List<GameObject> shipParts, GameObject checkObject) {
         Block block = blocks[checkObject];
         blocksLeft.Remove(checkObject);
         shipParts.Add(checkObject);
@@ -343,8 +330,7 @@ public class GridPlacement : MonoBehaviour
         if (block.down != null && blocksLeft.Contains(block.down)) FloodFill(ref blocksLeft, ref shipParts, block.down);
     }
 
-    private void ClearFaces (GameObject clear)
-    {
+    private void ClearFaces(GameObject clear) {
         Block block = blocks[clear];
         // Remove the block from the objects it was attached to as well
         if (block.front != null) SetFace(block.front, 2, null);
@@ -356,8 +342,7 @@ public class GridPlacement : MonoBehaviour
         blocks[clear] = new Block(); // Clear the block itself
     }
 
-    private void SetFace (GameObject SetObject, int faceID, GameObject attachObject)
-    {
+    private void SetFace(GameObject SetObject, int faceID, GameObject attachObject) {
         // Because a dictionary returns a copy of a struct you cant directly modify it
         Block block = blocks[SetObject];
         block.InternalSetFace(faceID, attachObject);
