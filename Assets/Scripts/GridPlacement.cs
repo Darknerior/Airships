@@ -326,25 +326,31 @@ public class GridPlacement : MonoBehaviour
             shipIndex++;
         }
 
-        for (int i = shipIndex; i < shipsAvailable; i++) {
-            Transform removedShip = activeAirships[i];
+        while (shipIndex < activeAirships.Count) {
+            Transform removedShip = activeAirships[shipIndex];
             activeAirships.Remove(removedShip);
             Destroy(removedShip.gameObject); // Destroy the excess empty ships
         }
     }
 
-    private void FloodFill(ref List<GameObject> blocksLeft, ref List<GameObject> shipParts, GameObject checkObject) {
-        Block block = blocks[checkObject];
-        blocksLeft.Remove(checkObject); // Remove this object from the unfilled objects to prevent infinite recursion
-        shipParts.Add(checkObject); // Add the part to the currently  tracked ship
+    private void FloodFill(ref List<GameObject> blocksLeft, ref List<GameObject> shipParts, GameObject checkObject)
+    {
+        Queue<GameObject> checkQueue = new();
+        checkQueue.Enqueue(checkObject);
+        while(checkQueue.Count> 0)
+        {
+            GameObject currentObject = checkQueue.Dequeue();
+            blocksLeft.Remove(currentObject);
+            shipParts.Add(currentObject);
+            Block block = blocks[currentObject];
 
-        // Recursive floodfill algorithm
-        if (block.front != null && blocksLeft.Contains(block.front)) FloodFill(ref blocksLeft, ref shipParts, block.front);
-        if (block.back != null && blocksLeft.Contains(block.back)) FloodFill(ref blocksLeft, ref shipParts, block.back);
-        if (block.left != null && blocksLeft.Contains(block.left)) FloodFill(ref blocksLeft, ref shipParts, block.left);
-        if (block.right != null && blocksLeft.Contains(block.right)) FloodFill(ref blocksLeft, ref shipParts, block.right);
-        if (block.up != null && blocksLeft.Contains(block.up)) FloodFill(ref blocksLeft, ref shipParts, block.up);
-        if (block.down != null && blocksLeft.Contains(block.down)) FloodFill(ref blocksLeft, ref shipParts, block.down);
+            if (block.front != null && blocksLeft.Contains(block.front)) checkQueue.Enqueue(block.front);
+            if (block.back != null && blocksLeft.Contains(block.back)) checkQueue.Enqueue(block.back);
+            if (block.left != null && blocksLeft.Contains(block.left)) checkQueue.Enqueue(block.left);
+            if (block.right != null && blocksLeft.Contains(block.right)) checkQueue.Enqueue(block.right);
+            if (block.up != null && blocksLeft.Contains(block.up)) checkQueue.Enqueue(block.up);
+            if (block.down != null && blocksLeft.Contains(block.down)) checkQueue.Enqueue(block.down);
+        }
     }
 
     private void ClearFaces(GameObject clear) {
