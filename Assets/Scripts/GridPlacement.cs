@@ -1,6 +1,6 @@
 using UnityEngine;
 using System.Collections.Generic;
-using System.ComponentModel.Design;
+using UnityEditor;
 
 public class GridPlacement : MonoBehaviour
 {
@@ -12,6 +12,22 @@ public class GridPlacement : MonoBehaviour
     private readonly LayerMask _airshipLayer = 3; // Layer 3 for airships
     private BoxCollider _boxCollider;
 
+    // Temp keybinds
+    public KeyCode place;
+    public KeyCode edit;
+    public KeyCode cancel;
+    public PlaceState state;
+    
+    public enum PlaceState {
+        nothing,
+        place,
+        edit
+    };
+
+    // Value holders for editing
+    public GameObject editObject;
+
+    // Trackers
     private Dictionary<GameObject, Block> blocks; // Integer is the id of the block
     private List<Transform> activeAirships;
 
@@ -23,7 +39,7 @@ public class GridPlacement : MonoBehaviour
         public GameObject up;
         public GameObject down;
 
-        public void SetFace(int faceID, GameObject attachedBlock)
+        public void InternalSetFace(int faceID, GameObject attachedBlock)
         {
             switch (faceID)
             {
@@ -52,31 +68,116 @@ public class GridPlacement : MonoBehaviour
         var ray = Camera.main.ScreenPointToRay(Input.mousePosition);
         if (Physics.Raycast(ray, out RaycastHit hit, Mathf.Infinity, placementLayer))
         {
-            _previewCube.SetActive(true);
+            StateManager();
 
-            // Adjust position to either ground hit or snap point
-            var placementPosition = CalculatePlacementPosition(hit);
-
-            _previewCube.transform.position = placementPosition;
-            _previewCube.transform.rotation = Quaternion.identity; // Reset rotation or set to snap point rotation
-
-            if (Input.GetMouseButtonDown(0)) // Left mouse click
-            {
-                // Instantiate the actual object
-                Transform parent = _airshipParent;
-                if (_airshipParent == null) {
-                    parent = new GameObject("Airship").transform;
-                    activeAirships.Add(parent);
-                }
-
-                Vector2Int faceID = CalculateFaceID(hit.normal, hit.transform);
-                var placedObject = CreateBlock(cubePrefab, placementPosition, Vector3.zero, parent);
-                blocks[placedObject].SetFace(faceID.x, hit.transform.gameObject); // Set the attached block for the newly placed block
-                if (_airshipParent == parent) // If we place on the ground you cant change this
-                    blocks[hit.transform.gameObject].SetFace(faceID.y, placedObject); // Set the attached block for the block the newly placed block is on
+            switch (state) { // What to do in each place state
+                case PlaceState.place: PlaceCube(hit); break;
+                case PlaceState.edit: EditCube(hit); break;
             }
         }
         else _previewCube.SetActive(false);
+    }
+
+    private void StateManager() {
+        if (Input.GetKeyDown(cancel)) {
+            if (state == PlaceState.edit) CancelEdit();
+            if (state == PlaceState.place) CancelPlace();
+
+
+            state = PlaceState.nothing;
+            return;
+        }
+        if (Input.GetKeyDown(place) && state == PlaceState.nothing) {
+            if (state == PlaceState.place) {
+                CancelPlace();
+                return;
+            }
+
+            state = PlaceState.place;
+            return;
+        }
+        if (Input.GetKeyDown(edit) && state == PlaceState.nothing) {
+            if (state == PlaceState.edit){
+                CancelEdit();
+                return;
+            }
+
+            state = PlaceState.edit;
+            return;
+        }
+    }
+
+    private void CancelEdit() {
+        editObject.SetActive(true);
+        editObject = null;
+        _previewCube.SetActive(false);
+        state = PlaceState.nothing;
+    }
+
+    private void CancelPlace() {
+        _previewCube.SetActive(false);
+        state = PlaceState.nothing;
+    }
+
+    private void EditCube(RaycastHit hit) {
+        GameObject hitObject = hit.transform.gameObject;
+
+        if (editObject == null && hitObject.transform.CompareTag("Moveable")) {
+            editObject = hitObject;
+            _airshipParent = editObject.transform.parent;
+        } 
+        else if (editObject == null) {
+            state = PlaceState.nothing;
+            return;
+        }
+
+        editObject.SetActive(false);
+        PlaceCube(hit);
+        return;
+    }
+
+    private void PlaceCube(RaycastHit hit) {
+        _previewCube.SetActive(true);
+
+        // Adjust position to either ground hit or snap point
+        var placementPosition = CalculatePlacementPosition(hit);
+
+        _previewCube.transform.position = placementPosition;
+        _previewCube.transform.rotation = Quaternion.identity; // Reset rotation or set to snap point rotation
+
+        if (Input.GetMouseButtonDown(0)) // Left mouse click
+        {
+            // Instantiate the actual object
+            Transform parent = _airshipParent;
+            if (_airshipParent == null) {
+                parent = new GameObject("Airship").transform;
+                activeAirships.Add(parent);
+            }
+
+            Vector2Int faceID = CalculateFaceID(hit.normal, hit.transform);
+            var placedObject = editObject;
+
+            if (editObject == null) {
+                placedObject = CreateBlock(cubePrefab, placementPosition, Vector3.zero, parent);
+                placedObject.transform.tag = "Moveable";
+            }
+            else {
+                placedObject.SetActive(true);
+                placedObject.transform.position = placementPosition;
+                placedObject.transform.rotation = Quaternion.identity;
+                ClearFaces(placedObject); // Clear the face attachments of the edited block
+            }
+
+            if (_airshipParent == parent) { // check if we didnt place on the ground
+                SetFace(placedObject, faceID.x, hit.transform.gameObject);
+                SetFace(hit.transform.gameObject, faceID.y, placedObject);
+            }
+
+            if (editObject != null) {
+                ShipCheck();
+                CancelEdit();
+            }
+        }
     }
 
     private Vector3 CalculatePlacementPosition(RaycastHit hit) {
@@ -163,28 +264,28 @@ public class GridPlacement : MonoBehaviour
 
     private Vector2Int CalculateFaceID(Vector3 normal, Transform hitObject)
     {
-        float[] dotProductArray = new float[8];
-        float maxDot = 0;
+        float[] angleArray = new float[8];
+        float minAngle = 0;
 
-        dotProductArray[0] = Vector3.Dot(hitObject.forward, normal); // Front face
-        dotProductArray[1] = Vector3.Dot(-hitObject.forward, normal); // Back face
-        dotProductArray[2] = Vector3.Dot(-hitObject.right, normal); //  Left face
-        dotProductArray[3] = Vector3.Dot(hitObject.right, normal); // Right face
-        dotProductArray[4] = Vector3.Dot(hitObject.up, normal); // Upper face
-        dotProductArray[5] = Vector3.Dot(-hitObject.up, normal); // Downwards face
+        angleArray[0] = Vector3.Angle(hitObject.forward, normal); // Front face
+        angleArray[1] = Vector3.Angle(-hitObject.forward, normal); // Back face
+        angleArray[2] = Vector3.Angle(-hitObject.right, normal); //  Left face
+        angleArray[3] = Vector3.Angle(hitObject.right, normal); // Right face
+        angleArray[4] = Vector3.Angle(hitObject.up, normal); // Upper face
+        angleArray[5] = Vector3.Angle(-hitObject.up, normal); // Downwards face
 
         for (int i = 0; i < 6; i++) {
             // Get the largest dot product
-            Mathf.Max(dotProductArray[i], maxDot);
+            Mathf.Min(angleArray[i], minAngle);
         }
-
+        
         // Return the face it is attached to and the inverse face
-        if (maxDot == dotProductArray[0]) return new Vector2Int(1, 2);
-        if (maxDot == dotProductArray[1]) return new Vector2Int(2, 1);
-        if (maxDot == dotProductArray[2]) return new Vector2Int(3, 4);
-        if (maxDot == dotProductArray[3]) return new Vector2Int(4, 3);
-        if (maxDot == dotProductArray[4]) return new Vector2Int(5, 6);
-        if (maxDot == dotProductArray[5]) return new Vector2Int(6, 5);
+        if (minAngle == angleArray[0]) return new Vector2Int(1, 2);
+        if (minAngle == angleArray[1]) return new Vector2Int(2, 1);
+        if (minAngle == angleArray[2]) return new Vector2Int(3, 4);
+        if (minAngle == angleArray[3]) return new Vector2Int(4, 3);
+        if (minAngle == angleArray[4]) return new Vector2Int(5, 6);
+        if (minAngle == angleArray[5]) return new Vector2Int(6, 5);
         return new Vector2Int(0, 0); // If its nothing return 0, 0 (not possible)
     }
 
@@ -205,12 +306,12 @@ public class GridPlacement : MonoBehaviour
             GameObject block = blocksLeft[0];
             FloodFill(ref blocksLeft, ref shipParts, block);
 
-            Transform parent = null;
+            Transform parent;
             if (shipIndex < shipsAvailable)
                 parent = activeAirships[shipIndex];
             else {
                 parent = new GameObject("Airship").transform;
-                activeAirships.Add(parent); // Using lists adding ad the end of the list here to maintain the used ships
+                activeAirships.Add(parent); // Using lists adding add the end of the list here to maintain the used ships
             }
 
             for (int i = 0; i < shipParts.Count; i++) {
@@ -228,17 +329,38 @@ public class GridPlacement : MonoBehaviour
         }
     }
 
-    private void FloodFill(ref List<GameObject> blocksLeft, ref List<GameObject> shipParts, GameObject checkObject)
+    private void FloodFill (ref List<GameObject> blocksLeft, ref List<GameObject> shipParts, GameObject checkObject)
     {
         Block block = blocks[checkObject];
         blocksLeft.Remove(checkObject);
         shipParts.Add(checkObject);
 
-        if (block.front != null) FloodFill(ref blocksLeft, ref shipParts, block.front);
-        if (block.back != null) FloodFill(ref blocksLeft, ref shipParts, block.back);
-        if (block.left != null) FloodFill(ref blocksLeft, ref shipParts, block.left);
-        if (block.right != null) FloodFill(ref blocksLeft, ref shipParts, block.right);
-        if (block.up != null) FloodFill(ref blocksLeft, ref shipParts, block.up);
-        if (block.down != null) FloodFill(ref blocksLeft, ref shipParts, block.down);
+        if (block.front != null && blocksLeft.Contains(block.front)) FloodFill(ref blocksLeft, ref shipParts, block.front);
+        if (block.back != null && blocksLeft.Contains(block.back)) FloodFill(ref blocksLeft, ref shipParts, block.back);
+        if (block.left != null && blocksLeft.Contains(block.left)) FloodFill(ref blocksLeft, ref shipParts, block.left);
+        if (block.right != null && blocksLeft.Contains(block.right)) FloodFill(ref blocksLeft, ref shipParts, block.right);
+        if (block.up != null && blocksLeft.Contains(block.up)) FloodFill(ref blocksLeft, ref shipParts, block.up);
+        if (block.down != null && blocksLeft.Contains(block.down)) FloodFill(ref blocksLeft, ref shipParts, block.down);
+    }
+
+    private void ClearFaces (GameObject clear)
+    {
+        Block block = blocks[clear];
+        // Remove the block from the objects it was attached to as well
+        if (block.front != null) SetFace(block.front, 2, null);
+        if (block.back != null) SetFace(block.back, 1, null);
+        if (block.left != null) SetFace(block.left, 4, null);
+        if (block.right != null) SetFace(block.right, 3, null);
+        if (block.up != null) SetFace(block.up, 6, null);
+        if (block.down != null) SetFace(block.down, 5, null);
+        blocks[clear] = new Block(); // Clear the block itself
+    }
+
+    private void SetFace (GameObject SetObject, int faceID, GameObject attachObject)
+    {
+        // Because a dictionary returns a copy of a struct you cant directly modify it
+        Block block = blocks[SetObject];
+        block.InternalSetFace(faceID, attachObject);
+        blocks[SetObject] = block;
     }
 }

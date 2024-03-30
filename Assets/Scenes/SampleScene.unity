@@ -649,6 +649,11 @@ MonoBehaviour:
   placementLayer:
     serializedVersion: 2
     m_Bits: 72
+  place: 13
+  edit: 324
+  cancel: 9
+  state: 0
+  editObject: {fileID: 0}
 --- !u!1 &585016279
 GameObject:
   m_ObjectHideFlags: 0
