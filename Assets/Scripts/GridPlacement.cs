@@ -1,6 +1,7 @@
 using UnityEngine;
 using System.Collections.Generic;
 using UnityEditor;
+using Unity.VisualScripting;
 
 public class GridPlacement : MonoBehaviour
 {
@@ -10,6 +11,8 @@ public class GridPlacement : MonoBehaviour
     public Material previewMaterial; 
     public LayerMask placementLayer; // The layers we can player on
     private readonly LayerMask _airshipLayer = 3; // Layer 3 for airships
+    public LayerMask airshipLayer;
+
     private BoxCollider _boxCollider;
 
     // Temp keybinds
@@ -122,7 +125,7 @@ public class GridPlacement : MonoBehaviour
     private void EditCube(RaycastHit hit) {
         GameObject hitObject = hit.transform.gameObject;
 
-        if (editObject == null && hitObject.transform.CompareTag("Moveable")) {
+        if (editObject == null && hitObject.layer == _airshipLayer) {
             editObject = hitObject;
             _airshipParent = editObject.transform.parent;
         } 
@@ -153,30 +156,22 @@ public class GridPlacement : MonoBehaviour
                 parent = new GameObject("Airship").transform;
                 activeAirships.Add(parent);
             }
-
-            Vector2Int faceID = CalculateFaceID(hit.normal, hit.transform);
+            
             var placedObject = editObject;
 
             if (editObject == null) {
                 placedObject = CreateBlock(cubePrefab, placementPosition, hit.transform.rotation, parent);
-                placedObject.transform.tag = "Moveable";
             }
             else {
                 placedObject.SetActive(true);
                 placedObject.transform.position = placementPosition;
                 placedObject.transform.rotation = Quaternion.identity;
                 ClearFaces(placedObject); // Clear the face attachments of the edited block
-            }
-
-            if (_airshipParent == parent) { // check if we didnt place on the ground
-                SetFace(placedObject, faceID.x, hit.transform.gameObject);
-                SetFace(hit.transform.gameObject, faceID.y, placedObject);
-            }
-
-            if (editObject != null) {
-                ShipCheck();
                 CancelEdit();
             }
+
+            SidesCheck(placedObject);
+            ShipCheck();
         }
     }
 
@@ -202,7 +197,7 @@ public class GridPlacement : MonoBehaviour
                         hitNormal.y * extents.y,
                         hitNormal.z * extents.z
                     );
-                    
+
                     placementPosition += sideOffset;
                 }
             }
@@ -250,8 +245,8 @@ public class GridPlacement : MonoBehaviour
     }
 
     private Vector2Int CalculateFaceID(Vector3 normal, Transform hitObject) {
-        float[] angleArray = new float[8];
-        float minAngle = 0;
+        float[] angleArray = new float[6];
+        float minAngle = float.MaxValue;
 
         angleArray[0] = Vector3.Angle(hitObject.forward, normal); // Front face
         angleArray[1] = Vector3.Angle(-hitObject.forward, normal); // Back face
@@ -261,8 +256,7 @@ public class GridPlacement : MonoBehaviour
         angleArray[5] = Vector3.Angle(-hitObject.up, normal); // Downwards face
 
         for (int i = 0; i < 6; i++) {
-            // Get the largest dot product
-            Mathf.Min(angleArray[i], minAngle);
+            minAngle = Mathf.Min(angleArray[i], minAngle);
         }
         
         // Return the face it is attached to and the inverse face
@@ -276,7 +270,30 @@ public class GridPlacement : MonoBehaviour
     }
 
     private void SidesCheck(GameObject checkObject) {
+        Collider[] overlaps = Physics.OverlapBox(checkObject.transform.position, checkObject.GetComponent<BoxCollider>().size / 2, checkObject.transform.rotation, airshipLayer);
+        for (int i = 0; i < overlaps.Length; i++) {
+            Collider collider = overlaps[i];
+            Transform colTransform = collider.transform;
+            if (colTransform.gameObject == checkObject) continue;
+            Vector3 objectDirection = colTransform.position - checkObject.transform.position;
+            Vector2Int faceID = CalculateFaceID(objectDirection, checkObject.transform);
+            Vector3 angleVector = Vector3.zero;
+            switch (faceID.x)
+            {
+                case 1: angleVector = checkObject.transform.forward; break;
+                case 2: angleVector = -checkObject.transform.forward; break;
+                case 3: angleVector = -checkObject.transform.right; break;
+                case 4: angleVector = checkObject.transform.right; break;
+                case 5: angleVector = checkObject.transform.up; break;
+                case 6: angleVector = -checkObject.transform.up; break;
+            }
 
+            if (Vector3.Angle(angleVector, objectDirection) == 0)
+            {
+                SetFace(checkObject, faceID.x, colTransform.gameObject);
+                SetFace(colTransform.gameObject, faceID.y, checkObject);
+            }
+        }
     }
 
     private void ShipCheck() {
@@ -287,7 +304,6 @@ public class GridPlacement : MonoBehaviour
         }
 
         int shipIndex = 0;
-        int addedShips = 0;
         int shipsAvailable = activeAirships.Count;
 
         while (blocksLeft.Count > 0) {
@@ -300,7 +316,7 @@ public class GridPlacement : MonoBehaviour
                 parent = activeAirships[shipIndex];
             else {
                 parent = new GameObject("Airship").transform;
-                activeAirships.Add(parent); // Using lists adding add the end of the list here to maintain the used ships
+                activeAirships.Add(parent); // Using lists adding at the end of the list here to maintain the used ships
             }
 
             for (int i = 0; i < shipParts.Count; i++) {
@@ -310,18 +326,19 @@ public class GridPlacement : MonoBehaviour
             shipIndex++;
         }
 
-        for (int i = shipIndex; i < shipIndex + addedShips; i++) {
+        for (int i = shipIndex; i < shipsAvailable; i++) {
             Transform removedShip = activeAirships[i];
             activeAirships.Remove(removedShip);
-            Destroy(removedShip.gameObject); // Destroy the excess ship parents
+            Destroy(removedShip.gameObject); // Destroy the excess empty ships
         }
     }
 
     private void FloodFill(ref List<GameObject> blocksLeft, ref List<GameObject> shipParts, GameObject checkObject) {
         Block block = blocks[checkObject];
-        blocksLeft.Remove(checkObject);
-        shipParts.Add(checkObject);
+        blocksLeft.Remove(checkObject); // Remove this object from the unfilled objects to prevent infinite recursion
+        shipParts.Add(checkObject); // Add the part to the currently  tracked ship
 
+        // Recursive floodfill algorithm
         if (block.front != null && blocksLeft.Contains(block.front)) FloodFill(ref blocksLeft, ref shipParts, block.front);
         if (block.back != null && blocksLeft.Contains(block.back)) FloodFill(ref blocksLeft, ref shipParts, block.back);
         if (block.left != null && blocksLeft.Contains(block.left)) FloodFill(ref blocksLeft, ref shipParts, block.left);
