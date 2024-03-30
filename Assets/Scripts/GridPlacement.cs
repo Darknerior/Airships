@@ -1,5 +1,6 @@
 using UnityEngine;
 using System.Collections.Generic;
+using System.ComponentModel.Design;
 
 public class GridPlacement : MonoBehaviour
 {
@@ -12,9 +13,10 @@ public class GridPlacement : MonoBehaviour
     private BoxCollider _boxCollider;
 
     private Dictionary<GameObject, Block> blocks; // Integer is the id of the block
+    private List<Transform> activeAirships;
 
     struct Block {
-        public GameObject front;
+        public GameObject front; // FaceID 1-6
         public GameObject back;
         public GameObject left;
         public GameObject right;
@@ -36,7 +38,9 @@ public class GridPlacement : MonoBehaviour
     }
 
     private void Start() {
-        blocks = new Dictionary<GameObject, Block>();
+        blocks = new();
+        activeAirships = new();
+
         _previewCube = Instantiate(cubePrefab, Vector3.zero, Quaternion.identity);
         SetPreviewOpacity(_previewCube, previewMaterial);
         _previewCube.SetActive(false);
@@ -59,7 +63,12 @@ public class GridPlacement : MonoBehaviour
             if (Input.GetMouseButtonDown(0)) // Left mouse click
             {
                 // Instantiate the actual object
-                Transform parent = _airshipParent != null ? _airshipParent : new GameObject("Airship").transform;
+                Transform parent = _airshipParent;
+                if (_airshipParent == null) {
+                    parent = new GameObject("Airship").transform;
+                    activeAirships.Add(parent);
+                }
+
                 Vector2Int faceID = CalculateFaceID(hit.normal, hit.transform);
                 var placedObject = CreateBlock(cubePrefab, placementPosition, Vector3.zero, parent);
                 blocks[placedObject].SetFace(faceID.x, hit.transform.gameObject); // Set the attached block for the newly placed block
@@ -165,15 +174,71 @@ public class GridPlacement : MonoBehaviour
         dotProductArray[5] = Vector3.Dot(-hitObject.up, normal); // Downwards face
 
         for (int i = 0; i < 6; i++) {
+            // Get the largest dot product
             Mathf.Max(dotProductArray[i], maxDot);
         }
 
+        // Return the face it is attached to and the inverse face
         if (maxDot == dotProductArray[0]) return new Vector2Int(1, 2);
         if (maxDot == dotProductArray[1]) return new Vector2Int(2, 1);
         if (maxDot == dotProductArray[2]) return new Vector2Int(3, 4);
         if (maxDot == dotProductArray[3]) return new Vector2Int(4, 3);
         if (maxDot == dotProductArray[4]) return new Vector2Int(5, 6);
         if (maxDot == dotProductArray[5]) return new Vector2Int(6, 5);
-        return new Vector2Int(0, 0);
+        return new Vector2Int(0, 0); // If its nothing return 0, 0 (not possible)
+    }
+
+    private void ShipCheck()
+    {
+        List<GameObject> blocksLeft = new();
+        List<GameObject> shipParts = new();
+        foreach (GameObject key in blocks.Keys) {
+            blocksLeft.Add(key); // Get all blocks in a tracker list
+        }
+
+        int shipIndex = 0;
+        int addedShips = 0;
+        int shipsAvailable = activeAirships.Count;
+
+        while (blocksLeft.Count > 0) {
+            shipParts.Clear();
+            GameObject block = blocksLeft[0];
+            FloodFill(ref blocksLeft, ref shipParts, block);
+
+            Transform parent = null;
+            if (shipIndex < shipsAvailable)
+                parent = activeAirships[shipIndex];
+            else {
+                parent = new GameObject("Airship").transform;
+                activeAirships.Add(parent); // Using lists adding ad the end of the list here to maintain the used ships
+            }
+
+            for (int i = 0; i < shipParts.Count; i++) {
+                shipParts[i].transform.SetParent(parent);
+            }
+
+            shipIndex++;
+        }
+
+        for (int i = shipIndex; i < shipIndex + addedShips; i++)
+        {
+            Transform removedShip = activeAirships[i];
+            activeAirships.Remove(removedShip);
+            Destroy(removedShip.gameObject); // Destroy the excess ship parents
+        }
+    }
+
+    private void FloodFill(ref List<GameObject> blocksLeft, ref List<GameObject> shipParts, GameObject checkObject)
+    {
+        Block block = blocks[checkObject];
+        blocksLeft.Remove(checkObject);
+        shipParts.Add(checkObject);
+
+        if (block.front != null) FloodFill(ref blocksLeft, ref shipParts, block.front);
+        if (block.back != null) FloodFill(ref blocksLeft, ref shipParts, block.back);
+        if (block.left != null) FloodFill(ref blocksLeft, ref shipParts, block.left);
+        if (block.right != null) FloodFill(ref blocksLeft, ref shipParts, block.right);
+        if (block.up != null) FloodFill(ref blocksLeft, ref shipParts, block.up);
+        if (block.down != null) FloodFill(ref blocksLeft, ref shipParts, block.down);
     }
 }
