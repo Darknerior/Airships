@@ -763,7 +763,12 @@ MonoBehaviour:
   edit: 324
   cancel: 9
   state: 0
+  rotUp: 273
+  rotDown: 274
+  rotLeft: 276
+  rotRight: 275
   editObject: {fileID: 0}
+  rotAngle: 45
 --- !u!1 &585016279
 GameObject:
   m_ObjectHideFlags: 0

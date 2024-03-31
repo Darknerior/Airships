@@ -1,7 +1,5 @@
 using UnityEngine;
 using System.Collections.Generic;
-using UnityEditor;
-using Unity.VisualScripting;
 
 public class GridPlacement : MonoBehaviour
 {
@@ -20,6 +18,10 @@ public class GridPlacement : MonoBehaviour
     public KeyCode edit;
     public KeyCode cancel;
     public PlaceState state;
+    public KeyCode rotUp;
+    public KeyCode rotDown;
+    public KeyCode rotLeft;
+    public KeyCode rotRight;
     
     public enum PlaceState {
         nothing,
@@ -29,6 +31,8 @@ public class GridPlacement : MonoBehaviour
 
     // Value holders for editing
     public GameObject editObject;
+    private Vector3 rotation;
+    public float rotAngle;
 
     // Trackers
     private Dictionary<GameObject, Block> blocks; // Integer is the id of the block
@@ -86,7 +90,6 @@ public class GridPlacement : MonoBehaviour
             if (state == PlaceState.edit) CancelEdit();
             if (state == PlaceState.place) CancelPlace();
 
-
             state = PlaceState.nothing;
             return;
         }
@@ -114,11 +117,13 @@ public class GridPlacement : MonoBehaviour
         editObject.SetActive(true);
         editObject = null;
         _previewCube.SetActive(false);
+        rotation = Vector3.zero;
         state = PlaceState.nothing;
     }
 
     private void CancelPlace() {
         _previewCube.SetActive(false);
+        rotation = Vector3.zero;
         state = PlaceState.nothing;
     }
 
@@ -145,8 +150,10 @@ public class GridPlacement : MonoBehaviour
         // Adjust position to either ground hit or snap point
         var placementPosition = CalculatePlacementPosition(hit);
 
+        rotation += CheckRotation();
+
         _previewCube.transform.position = placementPosition;
-        _previewCube.transform.rotation = hit.transform.rotation; // Reset rotation or set to snap point rotation
+        _previewCube.transform.rotation = Quaternion.Euler(hit.transform.eulerAngles + rotation); // Reset rotation or set to snap point rotation
 
         if (Input.GetMouseButtonDown(0)) // Left mouse click
         {
@@ -160,12 +167,12 @@ public class GridPlacement : MonoBehaviour
             var placedObject = editObject;
 
             if (editObject == null) {
-                placedObject = CreateBlock(cubePrefab, placementPosition, hit.transform.rotation, parent);
+                placedObject = CreateBlock(cubePrefab, placementPosition, hit.transform.rotation.eulerAngles + rotation, parent);
             }
             else {
                 placedObject.SetActive(true);
                 placedObject.transform.position = placementPosition;
-                placedObject.transform.rotation = Quaternion.identity;
+                placedObject.transform.rotation = _previewCube.transform.rotation;
                 ClearFaces(placedObject); // Clear the face attachments of the edited block
                 CancelEdit();
             }
@@ -214,6 +221,40 @@ public class GridPlacement : MonoBehaviour
         return placementPosition;
     }
 
+    private Vector3 CheckRotation()
+    {
+        float minAngle = float.MaxValue;
+        Vector3 rotationVector = Vector3.zero;
+        Vector3[] checkVectors = { new(0, 0, -1), new(0, 0, 1), new(-1, 0, 0), new(1, 0, 0), new(0, 1, 0), new(0, -1, 0) };
+        for (int i = 0; i < 6; i++) // Get the direction to rotate in
+        {
+            float angle = Mathf.Min(minAngle, Vector3.Angle(Camera.main.transform.forward, checkVectors[i]));
+            if (minAngle != angle) {
+                minAngle = angle;
+                rotationVector = checkVectors[i];
+            }
+        }
+
+        Vector3 rotation = Vector3.zero;
+        if (rotationVector != Vector3.zero) { // Should always return true
+            if (Input.GetKeyDown(rotLeft)) {
+                rotation = Quaternion.AngleAxis(rotAngle, rotationVector).eulerAngles;
+            }
+            if (Input.GetKeyDown(rotRight)) {
+                rotation = Quaternion.AngleAxis(-rotAngle, rotationVector).eulerAngles;
+            }
+            if (Input.GetKeyDown(rotUp)) {
+                rotationVector = Vector3.Cross(rotationVector, new Vector3(0, 1, 0));
+                rotation = Quaternion.AngleAxis(rotAngle, rotationVector).eulerAngles;
+            }
+            if (Input.GetKeyDown(rotDown)) {
+                rotationVector = Vector3.Cross(rotationVector, new Vector3(0, 1, 0));
+                rotation = Quaternion.AngleAxis(-rotAngle, rotationVector).eulerAngles;
+            }
+        }
+
+        return rotation;
+    }
 
     private static Transform GetClosestSnapPoint(Vector3 hitPoint, GameObject hitObject) {
         Transform closestSnapPoint = null;
@@ -236,8 +277,8 @@ public class GridPlacement : MonoBehaviour
         renderer.material = cloneMat;
     }
 
-    private GameObject CreateBlock(GameObject prefab, Vector3 position, Quaternion rotation, Transform parent) {
-        GameObject blockObject = Instantiate(prefab, position, rotation, parent);
+    private GameObject CreateBlock(GameObject prefab, Vector3 position, Vector3 rotation, Transform parent) {
+        GameObject blockObject = Instantiate(prefab, position, Quaternion.Euler(rotation), parent);
         blockObject.layer = _airshipLayer;
         Block block = new Block();
         blocks.Add(blockObject, block);
@@ -245,27 +286,24 @@ public class GridPlacement : MonoBehaviour
     }
 
     private Vector2Int CalculateFaceID(Vector3 normal, Transform hitObject) {
-        float[] angleArray = new float[6];
+        Vector2Int[] returnVectors = new Vector2Int[6] { new(1, 2), new(2, 1), new(3, 4), new(4, 3), new(5, 6), new(6, 5) };
+        Vector3[] checkVectors = new Vector3[6] { hitObject.forward, -hitObject.forward, -hitObject.right, hitObject.right, hitObject.up, -hitObject.right };
+        Vector3 minVector = Vector3.zero;
         float minAngle = float.MaxValue;
 
-        angleArray[0] = Vector3.Angle(hitObject.forward, normal); // Front face
-        angleArray[1] = Vector3.Angle(-hitObject.forward, normal); // Back face
-        angleArray[2] = Vector3.Angle(-hitObject.right, normal); //  Left face
-        angleArray[3] = Vector3.Angle(hitObject.right, normal); // Right face
-        angleArray[4] = Vector3.Angle(hitObject.up, normal); // Upper face
-        angleArray[5] = Vector3.Angle(-hitObject.up, normal); // Downwards face
-
         for (int i = 0; i < 6; i++) {
-            minAngle = Mathf.Min(angleArray[i], minAngle);
+            float angle = Mathf.Min(minAngle, Vector3.Angle(checkVectors[i], normal));
+
+            if (minAngle != angle) {
+                minAngle = angle;
+                minVector = checkVectors[i];
+            }
         }
-        
-        // Return the face it is attached to and the inverse face
-        if (minAngle == angleArray[0]) return new Vector2Int(1, 2);
-        if (minAngle == angleArray[1]) return new Vector2Int(2, 1);
-        if (minAngle == angleArray[2]) return new Vector2Int(3, 4);
-        if (minAngle == angleArray[3]) return new Vector2Int(4, 3);
-        if (minAngle == angleArray[4]) return new Vector2Int(5, 6);
-        if (minAngle == angleArray[5]) return new Vector2Int(6, 5);
+
+        for (int i = 0; i < 6; i ++) {
+            if (minVector == checkVectors[i]) return returnVectors[i];
+        }
+
         return new Vector2Int(0, 0); // If its nothing return 0, 0 (not possible)
     }
 
