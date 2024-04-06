@@ -763,8 +763,8 @@ MonoBehaviour:
   edit: 324
   cancel: 9
   state: 0
-  rotx: 116
-  rotnegx: 103
+  rotx: 103
+  rotnegx: 116
   rotz: 102
   rotnegz: 104
   roty: 118
