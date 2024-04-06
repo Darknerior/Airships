@@ -18,10 +18,14 @@ public class GridPlacement : MonoBehaviour
     public KeyCode edit;
     public KeyCode cancel;
     public PlaceState state;
-    public KeyCode rotUp;
-    public KeyCode rotDown;
-    public KeyCode rotLeft;
-    public KeyCode rotRight;
+
+    // Settings for interactable ui, switch between rotations and individual keybinds
+    public KeyCode rotx;
+    public KeyCode rotnegx;
+    public KeyCode rotz;
+    public KeyCode rotnegz;
+    public KeyCode roty;
+    public KeyCode rotnegy;
     
     public enum PlaceState {
         nothing,
@@ -30,15 +34,53 @@ public class GridPlacement : MonoBehaviour
     };
 
     // Value holders for editing
+    private bool snapRotation = false;
     public GameObject editObject;
-    private Vector3 rotation;
     public float rotAngle;
 
     // Trackers
     private Dictionary<GameObject, Block> blocks; // Integer is the id of the block
+    private Dictionary<int, BlockType> blockTypes;
     private List<Transform> activeAirships;
 
+    struct BlockType {
+        public bool cube; // If the block is a cube
+        // If this block can attach on that face
+        public bool front;
+        public bool back;
+        public bool left;
+        public bool right;
+        public bool up;
+        public bool down;
+
+        public bool CanAttach(int faceID) {
+            if (cube) {
+                switch (faceID) {
+                    case 1: return front;
+                    case 2: return back;
+                    case 3: return left;
+                    case 4: return right;
+                    case 5: return up;
+                    case 6: return down;
+                    default: return false;
+                }
+            }
+            else {
+                // Add triangle support
+                return false;
+            }
+        }
+
+        public bool AllowedConfiguration(int[] configuration) {
+            for (int i = 0; i < configuration.Length; i++) {
+                if (!CanAttach(configuration[i])) return false;
+            }
+            return true;
+        }
+    }
+
     struct Block {
+        public int blockID;
         public GameObject front; // FaceID 1-6
         public GameObject back;
         public GameObject left;
@@ -63,12 +105,16 @@ public class GridPlacement : MonoBehaviour
     private void Start() {
         blocks = new();
         activeAirships = new();
+        blockTypes = new();
 
         _previewCube = Instantiate(cubePrefab, Vector3.zero, Quaternion.identity);
         SetPreviewOpacity(_previewCube, previewMaterial);
         _previewCube.SetActive(false);
         _boxCollider = _previewCube.GetComponent<BoxCollider>();
-        _boxCollider.isTrigger = true;//Prevent player colliding with preview
+        _boxCollider.isTrigger = true; //Prevent player colliding with preview
+
+        // Temp
+        SetBlockTypes();
     }
 
     private void Update() {
@@ -117,13 +163,11 @@ public class GridPlacement : MonoBehaviour
         editObject.SetActive(true);
         editObject = null;
         _previewCube.SetActive(false);
-        rotation = Vector3.zero;
         state = PlaceState.nothing;
     }
 
     private void CancelPlace() {
         _previewCube.SetActive(false);
-        rotation = Vector3.zero;
         state = PlaceState.nothing;
     }
 
@@ -150,13 +194,14 @@ public class GridPlacement : MonoBehaviour
         // Adjust position to either ground hit or snap point
         var placementPosition = CalculatePlacementPosition(hit);
 
-        rotation += CheckRotation();
+
+        //_previewCube.transform.rotation = hit.transform.rotation;
+        if (snapRotation) _previewCube.transform.rotation = Quaternion.Euler(GetStartingRotation(1, _previewCube));
+        _previewCube.transform.Rotate(CheckRotation(1, _previewCube, hit), Space.World);
 
         _previewCube.transform.position = placementPosition;
-        _previewCube.transform.rotation = Quaternion.Euler(hit.transform.eulerAngles + rotation); // Reset rotation or set to snap point rotation
 
-        if (Input.GetMouseButtonDown(0)) // Left mouse click
-        {
+        if (Input.GetMouseButtonDown(0) && Physics.OverlapBox(placementPosition, _boxCollider.size / 2 - new Vector3(0.001f, 0.001f, 0.001f), _previewCube.transform.rotation).Length <= 1) { // Left mouse click
             // Instantiate the actual object
             Transform parent = _airshipParent;
             if (_airshipParent == null) {
@@ -167,7 +212,7 @@ public class GridPlacement : MonoBehaviour
             var placedObject = editObject;
 
             if (editObject == null) {
-                placedObject = CreateBlock(cubePrefab, placementPosition, hit.transform.rotation.eulerAngles + rotation, parent);
+                placedObject = CreateBlock(cubePrefab, placementPosition, _previewCube.transform.rotation, parent);
             }
             else {
                 placedObject.SetActive(true);
@@ -210,50 +255,109 @@ public class GridPlacement : MonoBehaviour
             }
         }
         else {
-            _airshipParent = null;//We null airship parent as the ray is not returning airship layer
-            placementPosition = hit.point;//Set the location to the point at the ground we are looking at
+            snapRotation = true;
+            _airshipParent = null; //We null airship parent as the ray is not returning airship layer
+            placementPosition = hit.point; //Set the location to the point at the ground we are looking at
             if (!_previewCube.TryGetComponent(out Collider collider)) return placementPosition;
             var heightOffset = collider.bounds.extents.y;
-            placementPosition += new Vector3(0, heightOffset, 0);//add height offset
+            placementPosition += new Vector3(0, heightOffset, 0); //add height offset
 
         }
 
         return placementPosition;
     }
 
-    private Vector3 CheckRotation()
+    private Vector3 CheckRotation(int blockID, GameObject rotObject, RaycastHit hit)
     {
         float minAngle = float.MaxValue;
         Vector3 rotationVector = Vector3.zero;
-        Vector3[] checkVectors = { new(0, 0, -1), new(0, 0, 1), new(-1, 0, 0), new(1, 0, 0), new(0, 1, 0), new(0, -1, 0) };
-        for (int i = 0; i < 6; i++) // Get the direction to rotate in
+        
+        for (int i = 0; i < 6; i++) // Get the direction to rotate in based on the look direction
         {
-            float angle = Mathf.Min(minAngle, Vector3.Angle(Camera.main.transform.forward, checkVectors[i]));
-            if (minAngle != angle) {
+            float angle = Mathf.Min(minAngle, Vector3.Angle(Camera.main.transform.forward, FaceIDToVector(i)));
+            if (minAngle > angle) {
                 minAngle = angle;
-                rotationVector = checkVectors[i];
+                rotationVector = FaceIDToVector(i);
             }
         }
 
-        Vector3 rotation = Vector3.zero;
+        KeyCode[] keys = new KeyCode[6] {rotnegz, rotz, rotx, rotnegx, roty, rotnegy};
+        Vector3[] rotationVectors = new Vector3[6] { rotationVector, -rotationVector, Vector3.Cross(rotationVector, new Vector3(0, 1, 0)), -Vector3.Cross(rotationVector, new(0, 1, 0)), Vector3.Cross(rotationVector, new(1, 0, 0)), -Vector3.Cross(rotationVector, new(1, 0, 0)) };
+
+        Vector3 finalRotation = Vector3.zero;
         if (rotationVector != Vector3.zero) { // Should always return true
-            if (Input.GetKeyDown(rotLeft)) {
-                rotation = Quaternion.AngleAxis(rotAngle, rotationVector).eulerAngles;
-            }
-            if (Input.GetKeyDown(rotRight)) {
-                rotation = Quaternion.AngleAxis(-rotAngle, rotationVector).eulerAngles;
-            }
-            if (Input.GetKeyDown(rotUp)) {
-                rotationVector = Vector3.Cross(rotationVector, new Vector3(0, 1, 0));
-                rotation = Quaternion.AngleAxis(rotAngle, rotationVector).eulerAngles;
-            }
-            if (Input.GetKeyDown(rotDown)) {
-                rotationVector = Vector3.Cross(rotationVector, new Vector3(0, 1, 0));
-                rotation = Quaternion.AngleAxis(-rotAngle, rotationVector).eulerAngles;
+            for (int i = 0; i < 6; i++) {
+                if (Input.GetKeyDown(keys[i])) {
+                    finalRotation = Quaternion.AngleAxis(45, rotationVectors[i]).eulerAngles;
+                    finalRotation = CanRotate(blockID, finalRotation, hit);
+                    return finalRotation;
+                }
             }
         }
 
-        return rotation;
+        return finalRotation;
+    }
+
+    private Vector3 CanRotate(int blockID, Vector3 addRotation, RaycastHit hit) {
+        // Get the attachment faces of the block it is being attached on (id.x) and the block itself (id.y)
+        Vector2Int snapFaces = CalculateFaceID(hit.normal);
+        Vector3 finalRotation = Vector3.zero;
+
+        BlockType blockType = blockTypes[blockID];
+        bool canAttach = false;
+        int rotations = 0;
+        while (!canAttach) {
+            canAttach = blockType.CanAttach(snapFaces.y);
+            finalRotation += addRotation;
+            rotations++;
+            if (rotations == 3) return Vector3.zero;
+        }
+
+        return finalRotation;
+    }
+
+    private Vector3 GetStartingRotation(int blockID, GameObject rotObject) {
+        snapRotation = false;
+        Collider[] overlaps = GetOverlaps(rotObject);
+        if (overlaps.Length == 0) return Vector3.zero;
+        List<int> attachedIDs = new();
+
+        for (int i = 0; i < overlaps.Length; i++) {
+            Collider collider = overlaps[i];
+            Transform colTransform = collider.transform;
+            Vector3 objectDirection = colTransform.position - rotObject.transform.position;
+            Vector2Int faceID = CalculateFaceID(objectDirection); // Check which face the object is near
+
+            if (IsAligned(rotObject.transform, objectDirection, CalculateLocalFaceID(objectDirection, rotObject.transform))) // Check if the object is directly next to it
+            {
+                attachedIDs.Add(faceID.x); // Add the faceID of the rotobject itself
+            }
+        }
+
+        if (attachedIDs.Count <= 0) return Vector3.zero;
+
+        BlockType type = blockTypes[blockID];
+
+        for (int i = 0; i < attachedIDs.Count; i++) {
+            if (type.CanAttach(attachedIDs[i])) return Vector3.zero;
+        }
+
+        int selfID = 0;
+        int attachID = attachedIDs[0] - 1;
+
+
+        for (int i = 1; i <= 6; i++) {
+            if (type.CanAttach(i)) selfID = i - 1;
+        }
+
+        Vector3[,] rotations = {{ new(0, 180, 0), new(0, -90, 0), new(0, 90, 0), new(90, 0, 0), new(-90, 0, 0)},
+                                { new(0, -180, 0), new(0, 90, 0), new(0, -90, 0), new(-90, 0, 0), new(90, 0, 0)},
+                                { new(0, 90, 0), new(0, -90, 0), new(0, 180, 0), new(0, 0, 90), new(0, 0, -90)}, 
+                                { new(0, -90, 0), new(0, 90, 0), new(0, -180, 0), new(0, 0, -90), new(0, 0, 90)},
+                                { new(-90, 0, 0), new(90, 0, 0), new(0, 0, -90), new(0, 0, 90), new(0, 0, 180)},
+                                { new(90, 0, 0), new(-90, 0, 0), new(0, 0, 90), new(0, 0, -90), new(0, 0, -180)}};
+
+        return rotations[selfID, attachID];
     }
 
     private static Transform GetClosestSnapPoint(Vector3 hitPoint, GameObject hitObject) {
@@ -277,15 +381,36 @@ public class GridPlacement : MonoBehaviour
         renderer.material = cloneMat;
     }
 
-    private GameObject CreateBlock(GameObject prefab, Vector3 position, Vector3 rotation, Transform parent) {
-        GameObject blockObject = Instantiate(prefab, position, Quaternion.Euler(rotation), parent);
+    private GameObject CreateBlock(GameObject prefab, Vector3 position, Quaternion rotation, Transform parent) {
+        GameObject blockObject = Instantiate(prefab, position, rotation, parent);
         blockObject.layer = _airshipLayer;
         Block block = new Block();
         blocks.Add(blockObject, block);
         return blockObject;
     }
 
-    private Vector2Int CalculateFaceID(Vector3 normal, Transform hitObject) {
+    private Vector2Int CalculateFaceID(Vector3 normal) {
+        Vector2Int[] returnVectors = new Vector2Int[6] { new(1, 2), new(2, 1), new(3, 4), new(4, 3), new(5, 6), new(6, 5) };
+        Vector3 minVector = Vector3.zero;
+        float minAngle = float.MaxValue;
+
+        for (int i = 0; i < 6; i++) {
+            float angle = Mathf.Min(minAngle, Vector3.Angle(FaceIDToVector(i), normal));
+
+            if (minAngle > angle) {
+                minAngle = angle;
+                minVector = FaceIDToVector(i);
+            }
+        }
+
+        for (int i = 0; i < 6; i ++) {
+            if (minVector == FaceIDToVector(i)) return returnVectors[i];
+        }
+
+        return new Vector2Int(0, 0); // If its nothing return 0, 0 (not possible)
+    }
+
+    private Vector2Int CalculateLocalFaceID(Vector3 normal, Transform hitObject) {
         Vector2Int[] returnVectors = new Vector2Int[6] { new(1, 2), new(2, 1), new(3, 4), new(4, 3), new(5, 6), new(6, 5) };
         Vector3[] checkVectors = new Vector3[6] { hitObject.forward, -hitObject.forward, -hitObject.right, hitObject.right, hitObject.up, -hitObject.right };
         Vector3 minVector = Vector3.zero;
@@ -294,7 +419,7 @@ public class GridPlacement : MonoBehaviour
         for (int i = 0; i < 6; i++) {
             float angle = Mathf.Min(minAngle, Vector3.Angle(checkVectors[i], normal));
 
-            if (minAngle != angle) {
+            if (minAngle > angle) {
                 minAngle = angle;
                 minVector = checkVectors[i];
             }
@@ -308,30 +433,50 @@ public class GridPlacement : MonoBehaviour
     }
 
     private void SidesCheck(GameObject checkObject) {
-        Collider[] overlaps = Physics.OverlapBox(checkObject.transform.position, checkObject.GetComponent<BoxCollider>().size / 2, checkObject.transform.rotation, airshipLayer);
+        Collider[] overlaps = GetOverlaps(checkObject);
+
         for (int i = 0; i < overlaps.Length; i++) {
             Collider collider = overlaps[i];
             Transform colTransform = collider.transform;
-            if (colTransform.gameObject == checkObject) continue;
             Vector3 objectDirection = colTransform.position - checkObject.transform.position;
-            Vector2Int faceID = CalculateFaceID(objectDirection, checkObject.transform);
-            Vector3 angleVector = Vector3.zero;
-            switch (faceID.x)
-            {
-                case 1: angleVector = checkObject.transform.forward; break;
-                case 2: angleVector = -checkObject.transform.forward; break;
-                case 3: angleVector = -checkObject.transform.right; break;
-                case 4: angleVector = checkObject.transform.right; break;
-                case 5: angleVector = checkObject.transform.up; break;
-                case 6: angleVector = -checkObject.transform.up; break;
-            }
+            Vector2Int faceID = CalculateFaceID(objectDirection); // Check which face the object is near
 
-            if (Vector3.Angle(angleVector, objectDirection) == 0)
+            if (IsAligned(checkObject.transform, objectDirection, CalculateLocalFaceID(objectDirection, checkObject.transform))) // Check if the object is directly next to it
             {
-                SetFace(checkObject, faceID.x, colTransform.gameObject);
-                SetFace(colTransform.gameObject, faceID.y, checkObject);
+                SetFace(checkObject, faceID.x, colTransform.gameObject); // Attach the object to itself
+                SetFace(colTransform.gameObject, faceID.y, checkObject); // Attach itself to the object
             }
         }
+    }
+
+    private bool IsAligned(Transform checkObject, Vector3 objectDirection, Vector2Int faceID) {
+        Vector3 angleVector = Vector3.zero;
+        switch (faceID.x)
+        {
+            case 1: angleVector = checkObject.forward; break;
+            case 2: angleVector = -checkObject.forward; break;
+            case 3: angleVector = -checkObject.right; break;
+            case 4: angleVector = checkObject.right; break;
+            case 5: angleVector = checkObject.up; break;
+            case 6: angleVector = -checkObject.up; break;
+        }
+
+        return Vector3.Angle(angleVector, objectDirection) == 0;
+    }
+    
+    private Collider[] GetOverlaps(GameObject checkObject)
+    {
+        Collider[] overlaps = Physics.OverlapBox(checkObject.transform.position, checkObject.GetComponent<BoxCollider>().size / 2, checkObject.transform.rotation, airshipLayer);
+        if (overlaps.Length <= 1) return new Collider[0];
+        List<Collider> finalOverlaps = new();
+        for (int i = 0; i < overlaps.Length; i++) {
+            if (overlaps[i].transform != checkObject.transform)
+            {
+                finalOverlaps.Add(overlaps[i]);
+            }
+        }
+
+        return finalOverlaps.ToArray();
     }
 
     private void ShipCheck() {
@@ -347,18 +492,18 @@ public class GridPlacement : MonoBehaviour
         while (blocksLeft.Count > 0) {
             shipParts.Clear();
             GameObject block = blocksLeft[0];
-            FloodFill(ref blocksLeft, ref shipParts, block);
+            FloodFill(ref blocksLeft, ref shipParts, block); // Get all 
 
             Transform parent;
             if (shipIndex < shipsAvailable)
                 parent = activeAirships[shipIndex];
             else {
                 parent = new GameObject("Airship").transform;
-                activeAirships.Add(parent); // Using lists adding at the end of the list here to maintain the used ships
+                activeAirships.Add(parent); // Lists add new indices at the end to we can safely do this without needing index adjustments
             }
 
             for (int i = 0; i < shipParts.Count; i++) {
-                shipParts[i].transform.SetParent(parent);
+                shipParts[i].transform.SetParent(parent); // Parent the ship parts under the new airship
             }
 
             shipIndex++;
@@ -408,5 +553,18 @@ public class GridPlacement : MonoBehaviour
         Block block = blocks[SetObject];
         block.InternalSetFace(faceID, attachObject);
         blocks[SetObject] = block;
+    }
+
+    private void SetBlockTypes()
+    {
+        // Regular cube
+        blockTypes.Add(1, new() { cube = true, front = true, back = true, left = true, right = true, up = true, down = true });
+        // Triangle
+        blockTypes.Add(2, new() { cube = false, front = false, back = true, left = true, right = true, up = false, down = true });
+    }
+
+    private Vector3 FaceIDToVector(int faceID) {
+        Vector3[] vectors = { new(0, 0, -1), new(0, 0, 1), new(-1, 0, 0), new(1, 0, 0), new(0, 1, 0), new(0, -1, 0) };
+        return vectors[faceID];
     }
 }
