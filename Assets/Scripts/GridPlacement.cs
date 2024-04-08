@@ -6,6 +6,7 @@ public class GridPlacement : MonoBehaviour
     public GameObject cubePrefab;
     public GameObject airshipPrefab;
     private GameObject _previewCube;
+    private GameObject _previewAirship;
     public Material previewMaterial; 
     public LayerMask placementLayer; // The layers we can player on
     private readonly LayerMask _airshipLayer = 3; // Layer 3 for airships
@@ -19,7 +20,7 @@ public class GridPlacement : MonoBehaviour
     public KeyCode cancel;
     public PlaceState state;
 
-    // Settings for interactable ui, switch between rotations and individual keybinds
+    // make Settings for interactable ui, switch between rotations and individual keybinds
     public KeyCode rotx;
     public KeyCode rotnegx;
     public KeyCode rotz;
@@ -30,16 +31,19 @@ public class GridPlacement : MonoBehaviour
     public enum PlaceState {
         nothing,
         place,
-        edit
+        edit,
+        editShip
     };
 
     // Value holders for editing
-    public GameObject editObject;
-    public float rotAngle;
-    public Transform previousHitBlock; // Keep track of the previous block hit by the raycast for accurate snaprotation
-    public Quaternion previousHitRotation;
-    public int previousSnapID;
-    public Transform rotationReference;
+    private GameObject editObject;
+    private GameObject previewEditObject;
+    private GameObject shipObject;
+    private Vector3 editOffset;
+    private Transform previousHitBlock; // Keep track of the previous block hit by the raycast for accurate snaprotation
+    private Quaternion previousHitRotation;
+    private int previousSnapID;
+    private Transform rotationReference;
     private Vector3 baseRotation;
     private Vector3 relativeRotation;
 
@@ -49,8 +53,9 @@ public class GridPlacement : MonoBehaviour
     private List<Transform> activeAirships;
 
     struct BlockType {
+        public float weight; // Weight of the block
+        public GameObject blockPrefab; // The prefab for the block
         // If this block can attach on that face
-        public float weight;
         public bool front;
         public bool back;
         public bool left;
@@ -72,7 +77,9 @@ public class GridPlacement : MonoBehaviour
     }
 
     struct Block {
-        public int blockID;
+        public int blockID; // ID of this block
+        // What block is attached to what face
+        public BoxCollider blockCollider; // Store collider to prevent a ton of GetComponent calls
         public GameObject front; // FaceID 1-6
         public GameObject back;
         public GameObject left;
@@ -91,6 +98,11 @@ public class GridPlacement : MonoBehaviour
                 case 5: up = attachedBlock; break;
                 case 6: down = attachedBlock; break;
             }
+        }
+
+        public bool IsOccupied() {
+            if (front == null || back == null || left == null || right == null || up == null || down == null) return false;
+            return true;
         }
     }
 
@@ -118,6 +130,7 @@ public class GridPlacement : MonoBehaviour
             switch (state) { // What to do in each place state
                 case PlaceState.place: PlaceCube(hit); break;
                 case PlaceState.edit: EditCube(hit); break;
+                case PlaceState.editShip: EditShip(hit); break;
             }
         }
         else _previewCube.SetActive(false);
@@ -125,6 +138,7 @@ public class GridPlacement : MonoBehaviour
 
     private void StateManager() {
         if (Input.GetKeyDown(cancel)) {
+            if (state == PlaceState.editShip) CancelEditShip();
             if (state == PlaceState.edit) CancelEdit();
             if (state == PlaceState.place) CancelPlace();
 
@@ -140,31 +154,86 @@ public class GridPlacement : MonoBehaviour
             state = PlaceState.place;
             return;
         }
-        if (Input.GetKeyDown(edit) && state == PlaceState.nothing) {
-            if (state == PlaceState.edit){
-                CancelEdit();
+        if (Input.GetKeyDown(edit)) {
+            if (state == PlaceState.editShip) {
+                CancelEditShip();
                 return;
             }
 
-            state = PlaceState.edit;
-            return;
+            if (state == PlaceState.edit) {
+                editObject.SetActive(true);
+                shipObject = editObject.transform.parent.gameObject;
+                shipObject.SetActive(false);
+                _previewAirship = CreatePreviewShip(shipObject);
+                editOffset = editObject.transform.localPosition;
+                _previewCube.SetActive(false);
+                relativeRotation = Vector3.zero;
+                state = PlaceState.editShip;
+                return;
+            }
+
+            if (state == PlaceState.nothing) {
+                state = PlaceState.edit;
+                return;
+            }
         }
+    }
+
+    private void CancelEditShip() {
+        shipObject.SetActive(true);
+        shipObject = null;
+        Destroy(_previewAirship);
+        editObject = null;
+        relativeRotation = Vector3.zero;
+        state = PlaceState.nothing;
     }
 
     private void CancelEdit() {
         editObject.SetActive(true);
         editObject = null;
         _previewCube.SetActive(false);
+        relativeRotation = Vector3.zero;
         state = PlaceState.nothing;
     }
 
     private void CancelPlace() {
+        relativeRotation = Vector3.zero;
         _previewCube.SetActive(false);
         state = PlaceState.nothing;
     }
 
+    private void EditShip(RaycastHit hit) {
+        rotationReference = hit.collider.transform;
+        var placementPosition = CalculatePlacementPosition(hit, previewEditObject);
+        _previewAirship.transform.position = placementPosition - editOffset;
+
+        baseRotation = GetBaseRotation(1, previewEditObject, hit);
+
+        Vector3 originalPosition = previewEditObject.transform.position;
+
+        _previewAirship.transform.rotation = Quaternion.Euler(baseRotation + relativeRotation);
+        Vector3 offset = previewEditObject.transform.position - originalPosition; // Rotating might offset the editObject, so we adjust for that
+        _previewAirship.transform.position -= offset;
+
+        relativeRotation += GetRotation(1, previewEditObject, hit);
+        _previewAirship.transform.rotation = Quaternion.Euler(baseRotation + relativeRotation);
+        offset = previewEditObject.transform.position - originalPosition;
+        _previewAirship.transform.position -= offset;
+
+        if (Input.GetMouseButtonDown(0) && !ShipOverlaps(_previewAirship)) {
+            shipObject.SetActive(true);
+            shipObject.transform.position = _previewAirship.transform.position;
+            shipObject.transform.rotation = _previewAirship.transform.rotation;
+            foreach (Transform child in shipObject.transform) {
+                SidesCheck(child.gameObject);
+            }
+            ShipCheck();
+            CancelEditShip();
+        }
+    }
+
     private void EditCube(RaycastHit hit) {
-        GameObject hitObject = hit.transform.gameObject;
+        GameObject hitObject = hit.collider.gameObject;
 
         if (editObject == null && hitObject.layer == _airshipLayer) {
             editObject = hitObject;
@@ -184,7 +253,8 @@ public class GridPlacement : MonoBehaviour
 
         // Adjust position to either ground hit or snap point
         rotationReference = hit.collider.transform;
-        var placementPosition = CalculatePlacementPosition(hit);
+        var placementPosition = CalculatePlacementPosition(hit, _previewCube);
+        _previewCube.transform.position = placementPosition;
 
         baseRotation = GetBaseRotation(1, _previewCube, hit);
 
@@ -192,7 +262,6 @@ public class GridPlacement : MonoBehaviour
         relativeRotation += GetRotation(1, _previewCube, hit);
 
         _previewCube.transform.rotation = Quaternion.Euler(baseRotation + relativeRotation);
-        _previewCube.transform.position = placementPosition;
 
         if (Input.GetMouseButtonDown(0) && GetOverlaps(_previewCube, _boxCollider.size - new Vector3(0.002f, 0.002f, 0.002f)).Length == 0) { // Left mouse click
             var placedObject = editObject;
@@ -213,7 +282,7 @@ public class GridPlacement : MonoBehaviour
         }
     }
 
-    private Vector3 CalculatePlacementPosition(RaycastHit hit) {
+    private Vector3 CalculatePlacementPosition(RaycastHit hit, GameObject placementCube) {
         var placementPosition = new Vector3(0,0,0);
 
         previousHitRotation = hit.collider.transform.rotation;
@@ -229,37 +298,6 @@ public class GridPlacement : MonoBehaviour
                 placementPosition = closestSnapPoint.position;
 
                 placementPosition += GetOffset(hit.normal);
-
-                Vector3 difference = placementPosition - _previewCube.transform.position;
-                _previewCube.transform.position += difference;
-
-                if (GetOverlaps(_previewCube, _boxCollider.size - new Vector3(0.002f, 0.002f, 0.002f)).Length > 0) { // If you try to place inside another block
-                    Collider[] surroundingCubes = GetOverlaps(_previewCube, _boxCollider.size * 2f);
-                    Transform closestSurroundingSnapPoint = null;
-                    float closestDistance = float.MaxValue;
-
-                    for (int i = 0; i < surroundingCubes.Length; i++) {
-                        Collider collider = surroundingCubes[i];
-                        var newClosestSnapPoint = GetClosestSnapPoint(hit.point, collider.gameObject);
-                        float distance = Vector3.Distance(newClosestSnapPoint.position, hit.point);
-                        if (distance < closestDistance) {
-                            closestDistance = distance;
-                            closestSurroundingSnapPoint = newClosestSnapPoint;
-                        }
-                    }
-
-                    if (closestSurroundingSnapPoint != null) {
-                        if (Physics.Raycast(Camera.main.transform.position, closestSurroundingSnapPoint.position - Camera.main.transform.position, out RaycastHit newHit, Mathf.Infinity, airshipLayer)) {
-                            hit.normal = newHit.normal; // Change the hit.normal to the newHit.normal
-                            closestSnapPoint = closestSurroundingSnapPoint;
-                            placementPosition = closestSnapPoint.position + GetOffset(newHit.normal);
-                            previousHitBlock = closestSnapPoint.parent;
-                            previousHitRotation = closestSnapPoint.parent.rotation;
-                            rotationReference = closestSnapPoint.parent;
-                        }
-                    }
-                }
-                _previewCube.transform.position -= difference;
             }
         }
         else {
@@ -268,6 +306,37 @@ public class GridPlacement : MonoBehaviour
             placementPosition += new Vector3(0, heightOffset, 0); //add height offset
 
         }
+
+        Vector3 difference = placementPosition - placementCube.transform.position;
+        placementCube.transform.position += difference;
+
+        if (GetOverlaps(placementCube, _boxCollider.size - new Vector3(0.002f, 0.002f, 0.002f)).Length > 0) { // If you try to place inside another block
+            Collider[] surroundingCubes = GetOverlaps(placementCube, _boxCollider.size * 2f);
+            Transform closestSurroundingSnapPoint = null;
+            float closestDistance = float.MaxValue;
+
+            for (int i = 0; i < surroundingCubes.Length; i++) {
+                Collider collider = surroundingCubes[i];
+                var newClosestSnapPoint = GetClosestSnapPoint(hit.point, collider.gameObject);
+                float distance = Vector3.Distance(newClosestSnapPoint.position, hit.point);
+                if (distance < closestDistance) {
+                    closestDistance = distance;
+                    closestSurroundingSnapPoint = newClosestSnapPoint;
+                }
+            }
+
+            if (closestSurroundingSnapPoint != null) {
+                if (Physics.Raycast(Camera.main.transform.position, closestSurroundingSnapPoint.position - Camera.main.transform.position, out RaycastHit newHit, Mathf.Infinity, airshipLayer)) {
+                    hit.normal = newHit.normal; // Change the hit.normal to the newHit.normal
+                    closestSnapPoint = closestSurroundingSnapPoint;
+                    placementPosition = closestSnapPoint.position + GetOffset(newHit.normal);
+                    previousHitBlock = closestSnapPoint.parent;
+                    previousHitRotation = closestSnapPoint.parent.rotation;
+                    rotationReference = closestSnapPoint.parent;
+                }
+            }
+        }
+        placementCube.transform.position -= difference;
 
         // Check if hit object is part of the airship and find the closest snap point if applicable
         int snapFaceID = CalculateFaceID(hit.normal).x;
@@ -327,6 +396,7 @@ public class GridPlacement : MonoBehaviour
                         Vector2Int snapFaces = CalculateLocalFaceID(hit.normal, rotObject.transform); // Get local faceid for accurate attachment check
                         canAttach = blockType.CanAttach(snapFaces.y);
                         if (GetOverlaps(rotObject, _boxCollider.size - new Vector3(0.002f, 0.002f, 0.002f)).Length > 0) canAttach = false;
+                        if (state == PlaceState.editShip && ShipOverlaps(_previewAirship)) canAttach = false; // Check if we are editing a ship and check if it overlaps with anything
                         if (rotations == 4) return Vector3.zero;
                     }
 
@@ -359,7 +429,7 @@ public class GridPlacement : MonoBehaviour
             }
         }
 
-        if (attachedIDs.Count <= 0) return rotationReference.transform.eulerAngles;
+        if (attachedIDs.Count == 0) return rotationReference.transform.eulerAngles;
 
         BlockType type = blockTypes[blockID];
 
@@ -380,12 +450,12 @@ public class GridPlacement : MonoBehaviour
                                 { new(0, 90, 0), new(0, -90, 0), new(0, 180, 0), new(0, 0, 90), new(0, 0, -90)}, 
                                 { new(0, -90, 0), new(0, 90, 0), new(0, -180, 0), new(0, 0, -90), new(0, 0, 90)},
                                 { new(-90, 0, 0), new(90, 0, 0), new(0, 0, -90), new(0, 0, 90), new(0, 0, 180)},
-                                { new(90, 0, 0), new(-90, 0, 0), new(0, 0, 90), new(0, 0, -90), new(0, 0, -180)}};
+                                { new(90, 0, 0), new(-90, 0, 0), new(0, 0, 90), new(0, 0, -90), new(0, 0, -180)}}; // All rotation cases with each id combos (6 * 5)
 
         return rotations[selfID, attachID] + rotationReference.eulerAngles;
     }
 
-    private static Transform GetClosestSnapPoint(Vector3 hitPoint, GameObject hitObject) {
+    private Transform GetClosestSnapPoint(Vector3 hitPoint, GameObject hitObject) {
         Transform closestSnapPoint = null;
         var closestDistance = Mathf.Infinity;
 
@@ -400,7 +470,7 @@ public class GridPlacement : MonoBehaviour
         return closestSnapPoint;
     }
 
-    private static void SetPreviewOpacity(GameObject obj, Material previewMat) {
+    private void SetPreviewOpacity(GameObject obj, Material previewMat) {
         if (!obj.TryGetComponent(out Renderer renderer)) return;
         var cloneMat = new Material(previewMat);
         renderer.material = cloneMat;
@@ -409,9 +479,32 @@ public class GridPlacement : MonoBehaviour
     private GameObject CreateBlock(int blockID, GameObject prefab, Vector3 position, Quaternion rotation) {
         GameObject blockObject = Instantiate(prefab, position, rotation);
         blockObject.layer = _airshipLayer;
-        Block block = new Block() {blockID = blockID};
+        Block block = new Block() {blockCollider = blockObject.GetComponent<BoxCollider>(), blockID = blockID};
         blocks.Add(blockObject, block);
         return blockObject;
+    }
+
+    private GameObject CreatePreviewShip(GameObject copyShip) {
+        // Generate a preview of the ship
+        GameObject previewShip = new GameObject("PreviewShip");
+        foreach (Transform child in copyShip.transform) {
+            GameObject previewChild = Instantiate(child.gameObject, child.localPosition, child.localRotation, previewShip.transform);
+            previewChild.GetComponent<BoxCollider>().isTrigger = true;
+            if (child == editObject.transform) previewEditObject = previewChild;
+            previewChild.gameObject.layer = LayerMask.NameToLayer("Preview");
+            SetPreviewOpacity(previewChild, previewMaterial);
+        }
+        return previewShip;
+    }
+
+    private bool ShipOverlaps(GameObject checkShip) {
+        foreach (Transform child in checkShip.transform) {
+            if (GetOverlaps(child.gameObject, _boxCollider.size - new Vector3(0.002f, 0.002f, 0.002f)).Length > 0) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private Vector2Int CalculateFaceID(Vector3 normal) {
@@ -582,7 +675,11 @@ public class GridPlacement : MonoBehaviour
         if (block.right != null) SetFace(block.right, 3, null);
         if (block.up != null) SetFace(block.up, 6, null);
         if (block.down != null) SetFace(block.down, 5, null);
-        blocks[clear] = new Block(); // Clear the block itself
+
+        for (int i = 0; i < 6; i++) {
+            block.InternalSetFace(i, null);
+        }
+        blocks[clear] = block; // Clear the block itself
     }
 
     private void SetFace(GameObject SetObject, int faceID, GameObject attachObject) {
@@ -595,13 +692,19 @@ public class GridPlacement : MonoBehaviour
     private void SetBlockTypes()
     {
         // Regular cube
-        blockTypes.Add(1, new() {weight = 1, front = true, back = true, left = true, right = true, up = true, down = true });
+        blockTypes.Add(1, new() {blockPrefab = cubePrefab, weight = 1, front = true, back = true, left = true, right = true, up = true, down = true });
         // Slab
-        blockTypes.Add(2, new() {weight = 0.5f, front = true, back = true, left = true, right = true, up = false, down = true });
+        blockTypes.Add(2, new() {blockPrefab = null /* create a slab prefab */, weight = 0.5f, front = true, back = true, left = true, right = true, up = false, down = true });
     }
 
     private Vector3 FaceIDToVector(int faceID) {
         Vector3[] vectors = { new(0, 0, -1), new(0, 0, 1), new(-1, 0, 0), new(1, 0, 0), new(0, 1, 0), new(0, -1, 0) };
         return vectors[faceID];
+    }
+
+    public Vector2Int TransformFaceID(Vector2Int faceID, Quaternion rotation) { // Change the faceID according to a rotation
+        Vector3 IDPosition = FaceIDToVector(faceID.x);
+        IDPosition = rotation * IDPosition;
+        return CalculateFaceID(IDPosition);
     }
 }
