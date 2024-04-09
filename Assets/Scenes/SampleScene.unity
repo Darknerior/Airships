@@ -757,6 +757,9 @@ MonoBehaviour:
   placementLayer:
     serializedVersion: 2
     m_Bits: 72
+  collisionLayer:
+    serializedVersion: 2
+    m_Bits: 127
   airshipLayer:
     serializedVersion: 2
     m_Bits: 8
@@ -770,8 +773,6 @@ MonoBehaviour:
   rotnegz: 104
   roty: 118
   rotnegy: 98
-  editObject: {fileID: 0}
-  rotAngle: 45
 --- !u!1 &585016279
 GameObject:
   m_ObjectHideFlags: 0

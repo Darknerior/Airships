@@ -9,6 +9,7 @@ public class GridPlacement : MonoBehaviour
     private GameObject _previewAirship;
     public Material previewMaterial; 
     public LayerMask placementLayer; // The layers we can player on
+    public LayerMask collisionLayer;
     private readonly LayerMask _airshipLayer = 3; // Layer 3 for airships
     public LayerMask airshipLayer;
 
@@ -37,18 +38,18 @@ public class GridPlacement : MonoBehaviour
 
     // Value holders for editing
     private GameObject editObject;
-    private GameObject previewEditObject;
+    private GameObject _previewEditObject;
     private GameObject shipObject;
     private Vector3 editOffset;
     private Transform previousHitBlock; // Keep track of the previous block hit by the raycast for accurate snaprotation
     private Quaternion previousHitRotation;
-    private int previousSnapID;
+    private int previousSnapId;
     private Transform rotationReference;
     private Vector3 baseRotation;
     private Vector3 relativeRotation;
 
     // Trackers
-    private Dictionary<GameObject, Block> blocks; // Integer is the id of the block
+    private Dictionary<GameObject, Block> blocks; // Integer is the Id of the block
     private Dictionary<int, BlockType> blockTypes;
     private List<Transform> activeAirships;
 
@@ -63,8 +64,8 @@ public class GridPlacement : MonoBehaviour
         public bool up;
         public bool down;
 
-        public bool CanAttach(int faceID) {
-            switch (faceID) {
+        public bool CanAttach(int faceId) {
+            switch (faceId) {
                 case 1: return front;
                 case 2: return back;
                 case 3: return left;
@@ -77,19 +78,19 @@ public class GridPlacement : MonoBehaviour
     }
 
     struct Block {
-        public int blockID; // ID of this block
+        public int blockId; // Id of this block
         // What block is attached to what face
         public BoxCollider blockCollider; // Store collider to prevent a ton of GetComponent calls
-        public GameObject front; // FaceID 1-6
+        public GameObject front; // FaceId 1-6
         public GameObject back;
         public GameObject left;
         public GameObject right;
         public GameObject up;
         public GameObject down;
 
-        public void InternalSetFace(int faceID, GameObject attachedBlock)
+        public void InternalSetFace(int faceId, GameObject attachedBlock)
         {
-            switch (faceID)
+            switch (faceId)
             {
                 case 1: front = attachedBlock; break;
                 case 2: back = attachedBlock; break;
@@ -204,20 +205,20 @@ public class GridPlacement : MonoBehaviour
 
     private void EditShip(RaycastHit hit) {
         rotationReference = hit.collider.transform;
-        var placementPosition = CalculatePlacementPosition(hit, previewEditObject);
+        var placementPosition = CalculatePlacementPosition(hit, _previewEditObject);
         _previewAirship.transform.position = placementPosition - editOffset;
 
-        baseRotation = GetBaseRotation(1, previewEditObject, hit);
+        baseRotation = GetBaseRotation(1, _previewEditObject, hit);
 
-        Vector3 originalPosition = previewEditObject.transform.position;
+        Vector3 originalPosition = _previewEditObject.transform.position;
 
         _previewAirship.transform.rotation = Quaternion.Euler(baseRotation + relativeRotation);
-        Vector3 offset = previewEditObject.transform.position - originalPosition; // Rotating might offset the editObject, so we adjust for that
+        Vector3 offset = _previewEditObject.transform.position - originalPosition; // Rotating might offset the editObject, so we adjust for that
         _previewAirship.transform.position -= offset;
 
-        relativeRotation += GetRotation(1, previewEditObject, hit);
+        relativeRotation += GetRotation(1, _previewEditObject, hit);
         _previewAirship.transform.rotation = Quaternion.Euler(baseRotation + relativeRotation);
-        offset = previewEditObject.transform.position - originalPosition;
+        offset = _previewEditObject.transform.position - originalPosition;
         _previewAirship.transform.position -= offset;
 
         if (Input.GetMouseButtonDown(0) && !ShipOverlaps(_previewAirship)) {
@@ -263,7 +264,7 @@ public class GridPlacement : MonoBehaviour
 
         _previewCube.transform.rotation = Quaternion.Euler(baseRotation + relativeRotation);
 
-        if (Input.GetMouseButtonDown(0) && GetOverlaps(_previewCube, _boxCollider.size - new Vector3(0.002f, 0.002f, 0.002f)).Length == 0) { // Left mouse click
+        if (Input.GetMouseButtonDown(0) && GetOverlaps(_previewCube, _boxCollider.size - new Vector3(0.002f, 0.002f, 0.002f), collisionLayer ).Length == 0) { // Left mouse click
             var placedObject = editObject;
 
             if (editObject == null) {
@@ -296,22 +297,16 @@ public class GridPlacement : MonoBehaviour
             {
                 // If a snap point is found, set pos
                 placementPosition = closestSnapPoint.position;
-
-                placementPosition += GetOffset(hit.normal);
             }
         }
-        else {
-            placementPosition = hit.point; //Set the location to the point at the ground we are looking at
-            var heightOffset = _boxCollider.size.y * 0.5f;
-            placementPosition += new Vector3(0, heightOffset, 0); //add height offset
-
-        }
+        else placementPosition = hit.point; //Set the location to the point at the ground we are looking at
+        placementPosition += GetOffset(hit.normal);
 
         Vector3 difference = placementPosition - placementCube.transform.position;
         placementCube.transform.position += difference;
 
-        if (GetOverlaps(placementCube, _boxCollider.size - new Vector3(0.002f, 0.002f, 0.002f)).Length > 0) { // If you try to place inside another block
-            Collider[] surroundingCubes = GetOverlaps(placementCube, _boxCollider.size * 2f);
+        if (GetOverlaps(placementCube, _boxCollider.size - new Vector3(0.002f, 0.002f, 0.002f), collisionLayer).Length > 0) { // If you try to place inside another block
+            Collider[] surroundingCubes = GetOverlaps(placementCube, _boxCollider.size * 2f, airshipLayer);
             Transform closestSurroundingSnapPoint = null;
             float closestDistance = float.MaxValue;
 
@@ -339,12 +334,12 @@ public class GridPlacement : MonoBehaviour
         placementCube.transform.position -= difference;
 
         // Check if hit object is part of the airship and find the closest snap point if applicable
-        int snapFaceID = CalculateFaceID(hit.normal).x;
-        if (hit.collider.transform != previousHitBlock || rotationReference.rotation != previousHitRotation || snapFaceID != previousSnapID) {
+        int snapFaceId = CalculateLocalFaceId(hit.normal, hit.collider.transform);
+        if (hit.collider.transform != previousHitBlock || rotationReference.rotation != previousHitRotation || snapFaceId != previousSnapId) {
             relativeRotation = Vector3.zero;
         }
 
-        previousSnapID = snapFaceID;
+        previousSnapId = snapFaceId;
 
         return placementPosition;
     }
@@ -362,17 +357,17 @@ public class GridPlacement : MonoBehaviour
         return sideOffset;
     }
 
-    private Vector3 GetRotation(int blockID, GameObject rotObject, RaycastHit hit)
+    private Vector3 GetRotation(int blockId, GameObject rotObject, RaycastHit hit)
     {
         float minAngle = float.MaxValue;
         Vector3 rotationVector = Vector3.zero;
         
-        for (int i = 0; i < 6; i++) // Get the direction to rotate in based on the look direction
+        for (int i = 1; i <= 6; i++) // Get the direction to rotate in based on the look direction
         {
-            float angle = Mathf.Min(minAngle, Vector3.Angle(Camera.main.transform.forward, FaceIDToVector(i)));
+            float angle = Mathf.Min(minAngle, Vector3.Angle(Camera.main.transform.forward, FaceIdToVector(i)));
             if (minAngle > angle) {
                 minAngle = angle;
-                rotationVector = FaceIDToVector(i);
+                rotationVector = FaceIdToVector(i);
             }
         }
 
@@ -385,7 +380,7 @@ public class GridPlacement : MonoBehaviour
                     Vector3 rotationStep = Quaternion.AngleAxis(45, rotationVectors[i]).eulerAngles;
                     Vector3 finalRotation = Vector3.zero;
                     Quaternion originalRotation = rotObject.transform.rotation;
-                    BlockType blockType = blockTypes[blockID];
+                    BlockType blockType = blockTypes[blockId];
                     bool canAttach = false;
                     int rotations = 0;
 
@@ -393,11 +388,11 @@ public class GridPlacement : MonoBehaviour
                         rotations++;
                         rotObject.transform.Rotate(rotationStep, Space.World);
                         finalRotation += rotationStep;
-                        Vector2Int snapFaces = CalculateLocalFaceID(hit.normal, rotObject.transform); // Get local faceid for accurate attachment check
-                        canAttach = blockType.CanAttach(snapFaces.y);
-                        if (GetOverlaps(rotObject, _boxCollider.size - new Vector3(0.002f, 0.002f, 0.002f)).Length > 0) canAttach = false;
+                        int snapFaces = CalculateLocalFaceId(hit.normal, hit.collider.transform); // Get local faceId for accurate attachment check
+                        canAttach = blockType.CanAttach(snapFaces);
+                        if (GetOverlaps(rotObject, _boxCollider.size - new Vector3(0.002f, 0.002f, 0.002f), collisionLayer).Length > 0) canAttach = false;
                         if (state == PlaceState.editShip && ShipOverlaps(_previewAirship)) canAttach = false; // Check if we are editing a ship and check if it overlaps with anything
-                        if (rotations == 4) return Vector3.zero;
+                        if (rotations == 3) return Vector3.zero;
                     }
 
                     rotObject.transform.rotation = originalRotation;
@@ -411,38 +406,38 @@ public class GridPlacement : MonoBehaviour
     }
 
 
-    private Vector3 GetBaseRotation(int blockID, GameObject rotObject, RaycastHit hit) {
+    private Vector3 GetBaseRotation(int blockId, GameObject rotObject, RaycastHit hit) {
         rotObject.transform.rotation = rotationReference.rotation;
-        Collider[] overlaps = GetOverlaps(rotObject, _boxCollider.size);
+        Collider[] overlaps = GetOverlaps(rotObject, _boxCollider.size, airshipLayer);
         if (overlaps.Length == 0) return Vector3.zero;
-        List<int> attachedIDs = new();
+        List<int> attachedIds = new();
 
         for (int i = 0; i < overlaps.Length; i++) {
             Collider collider = overlaps[i];
             Transform colTransform = collider.transform;
             Vector3 objectDirection = colTransform.position - rotObject.transform.position;
-            Vector2Int faceID = CalculateFaceID(objectDirection); // Check which face the object is near
+            int selfFaceId = CalculateFaceId(objectDirection); // Check which face the object is near
 
-            if (IsAligned(rotObject.transform, objectDirection, CalculateLocalFaceID(objectDirection, rotObject.transform))) // Check if the object is directly next to it
+            if (IsAligned(rotObject.transform, objectDirection, selfFaceId)) // Check if the object is directly next to it
             {
-                attachedIDs.Add(faceID.x); // Add the faceID of the rotobject itself
+                attachedIds.Add(selfFaceId); // Add the faceId of the rotobject itself
             }
         }
 
-        if (attachedIDs.Count == 0) return rotationReference.transform.eulerAngles;
+        if (attachedIds.Count == 0) return rotationReference.transform.eulerAngles;
 
-        BlockType type = blockTypes[blockID];
+        BlockType type = blockTypes[blockId];
 
-        for (int i = 0; i < attachedIDs.Count; i++) {
-            if (type.CanAttach(attachedIDs[i])) return rotationReference.eulerAngles;
+        for (int i = 0; i < attachedIds.Count; i++) {
+            if (type.CanAttach(attachedIds[i])) return rotationReference.eulerAngles;
         }
 
-        int selfID = 0;
-        int attachID = attachedIDs[0] - 1;
+        int selfId = 0;
+        int attachId = attachedIds[0] - 1;
 
 
-        for (int i = 1; i <= 6; i++) {
-            if (type.CanAttach(i)) selfID = i - 1;
+        for (int i = 0; i < 6; i++) {
+            if (type.CanAttach(i)) selfId = i - 1;
         }
 
         Vector3[,] rotations = {{ new(0, 180, 0), new(0, -90, 0), new(0, 90, 0), new(90, 0, 0), new(-90, 0, 0)},
@@ -450,9 +445,9 @@ public class GridPlacement : MonoBehaviour
                                 { new(0, 90, 0), new(0, -90, 0), new(0, 180, 0), new(0, 0, 90), new(0, 0, -90)}, 
                                 { new(0, -90, 0), new(0, 90, 0), new(0, -180, 0), new(0, 0, -90), new(0, 0, 90)},
                                 { new(-90, 0, 0), new(90, 0, 0), new(0, 0, -90), new(0, 0, 90), new(0, 0, 180)},
-                                { new(90, 0, 0), new(-90, 0, 0), new(0, 0, 90), new(0, 0, -90), new(0, 0, -180)}}; // All rotation cases with each id combos (6 * 5)
+                                { new(90, 0, 0), new(-90, 0, 0), new(0, 0, 90), new(0, 0, -90), new(0, 0, -180)}}; // All rotation cases with each Id combos (6 * 5)
 
-        return rotations[selfID, attachID] + rotationReference.eulerAngles;
+        return rotations[selfId, attachId] + rotationReference.eulerAngles;
     }
 
     private Transform GetClosestSnapPoint(Vector3 hitPoint, GameObject hitObject) {
@@ -476,10 +471,10 @@ public class GridPlacement : MonoBehaviour
         renderer.material = cloneMat;
     }
 
-    private GameObject CreateBlock(int blockID, GameObject prefab, Vector3 position, Quaternion rotation) {
+    private GameObject CreateBlock(int blockId, GameObject prefab, Vector3 position, Quaternion rotation) {
         GameObject blockObject = Instantiate(prefab, position, rotation);
         blockObject.layer = _airshipLayer;
-        Block block = new Block() {blockCollider = blockObject.GetComponent<BoxCollider>(), blockID = blockID};
+        Block block = new Block() {blockCollider = blockObject.GetComponent<BoxCollider>(), blockId = blockId};
         blocks.Add(blockObject, block);
         return blockObject;
     }
@@ -490,7 +485,7 @@ public class GridPlacement : MonoBehaviour
         foreach (Transform child in copyShip.transform) {
             GameObject previewChild = Instantiate(child.gameObject, child.localPosition, child.localRotation, previewShip.transform);
             previewChild.GetComponent<BoxCollider>().isTrigger = true;
-            if (child == editObject.transform) previewEditObject = previewChild;
+            if (child == editObject.transform) _previewEditObject = previewChild;
             previewChild.gameObject.layer = LayerMask.NameToLayer("Preview");
             SetPreviewOpacity(previewChild, previewMaterial);
         }
@@ -499,7 +494,7 @@ public class GridPlacement : MonoBehaviour
 
     private bool ShipOverlaps(GameObject checkShip) {
         foreach (Transform child in checkShip.transform) {
-            if (GetOverlaps(child.gameObject, _boxCollider.size - new Vector3(0.002f, 0.002f, 0.002f)).Length > 0) {
+            if (GetOverlaps(child.gameObject, _boxCollider.size - new Vector3(0.002f, 0.002f, 0.002f), collisionLayer).Length > 0) {
                 return true;
             }
         }
@@ -507,31 +502,25 @@ public class GridPlacement : MonoBehaviour
         return false;
     }
 
-    private Vector2Int CalculateFaceID(Vector3 normal) {
-        Vector2Int[] returnVectors = new Vector2Int[6] { new(1, 2), new(2, 1), new(3, 4), new(4, 3), new(5, 6), new(6, 5) };
-        Vector3 minVector = Vector3.zero;
+    private int CalculateFaceId(Vector3 normal) {
+        int Id = 0;
         float minAngle = float.MaxValue;
 
-        for (int i = 0; i < 6; i++) {
-            float angle = Mathf.Min(minAngle, Vector3.Angle(FaceIDToVector(i), normal));
+        for (int i = 1; i <= 6; i++) {
+            float angle = Mathf.Min(minAngle, Vector3.Angle(FaceIdToVector(i), normal));
 
             if (minAngle > angle) {
                 minAngle = angle;
-                minVector = FaceIDToVector(i);
+                Id = i;
             }
         }
 
-        for (int i = 0; i < 6; i ++) {
-            if (minVector == FaceIDToVector(i)) return returnVectors[i];
-        }
-
-        return new Vector2Int(0, 0); // If its nothing return 0, 0 (not possible)
+        return Id; // If its nothing return 0, 0 (not possible)
     }
 
-    private Vector2Int CalculateLocalFaceID(Vector3 normal, Transform hitObject) {
-        Vector2Int[] returnVectors = new Vector2Int[6] { new(1, 2), new(2, 1), new(3, 4), new(4, 3), new(5, 6), new(6, 5) };
+    private int CalculateLocalFaceId(Vector3 normal, Transform hitObject) {
         Vector3[] checkVectors = new Vector3[6] { hitObject.forward, -hitObject.forward, -hitObject.right, hitObject.right, hitObject.up, -hitObject.up };
-        Vector3 minVector = Vector3.zero;
+        int Id = 0;
         float minAngle = float.MaxValue;
 
         for (int i = 0; i < 6; i++) {
@@ -539,37 +528,34 @@ public class GridPlacement : MonoBehaviour
 
             if (minAngle > angle) {
                 minAngle = angle;
-                minVector = checkVectors[i];
+                Id = i + 1;
             }
         }
 
-        for (int i = 0; i < 6; i ++) {
-            if (minVector == checkVectors[i]) return returnVectors[i];
-        }
-
-        return new Vector2Int(0, 0); // If its nothing return 0, 0 (not possible)
+        return Id;
     }
 
     private void SidesCheck(GameObject checkObject) {
-        Collider[] overlaps = GetOverlaps(checkObject, _boxCollider.size);
+        Collider[] overlaps = GetOverlaps(checkObject, _boxCollider.size + new Vector3(0.002f, 0.002f, 0.002f), airshipLayer);
 
         for (int i = 0; i < overlaps.Length; i++) {
             Collider collider = overlaps[i];
             Transform colTransform = collider.transform;
             Vector3 objectDirection = colTransform.position - checkObject.transform.position;
-            Vector2Int faceID = CalculateFaceID(objectDirection); // Check which face the object is near
+            int selfFaceId = CalculateLocalFaceId(objectDirection, checkObject.transform); // Check which face the object is near
 
-            if (IsAligned(checkObject.transform, objectDirection, CalculateLocalFaceID(objectDirection, checkObject.transform))) // Check if the object is directly next to it
+            if (IsAligned(checkObject.transform, objectDirection, selfFaceId)) // Check if the object is directly next to it
             {
-                SetFace(checkObject, faceID.x, colTransform.gameObject); // Attach the object to itself
-                SetFace(colTransform.gameObject, faceID.y, checkObject); // Attach itself to the object
+                SetFace(checkObject, selfFaceId, colTransform.gameObject); // Attach the object to itself
+                int attachFaceId = CalculateLocalFaceId(-objectDirection, colTransform);
+                SetFace(colTransform.gameObject, attachFaceId, checkObject); // Attach itself to the object
             }
         }
     }
 
-    private bool IsAligned(Transform checkObject, Vector3 objectDirection, Vector2Int faceID) {
+    private bool IsAligned(Transform checkObject, Vector3 objectDirection, int faceId) {
         Vector3 angleVector = Vector3.zero;
-        switch (faceID.x)
+        switch (faceId)
         {
             case 1: angleVector = checkObject.forward; break;
             case 2: angleVector = -checkObject.forward; break;
@@ -582,9 +568,9 @@ public class GridPlacement : MonoBehaviour
         return Vector3.Angle(angleVector, objectDirection) < 1f;
     }
     
-    private Collider[] GetOverlaps(GameObject checkObject, Vector3 extents)
+    private Collider[] GetOverlaps(GameObject checkObject, Vector3 extents, LayerMask layerMask)
     {
-        Collider[] overlaps = Physics.OverlapBox(checkObject.transform.position, extents / 2, checkObject.transform.rotation, airshipLayer);
+        Collider[] overlaps = Physics.OverlapBox(checkObject.transform.position, extents / 2, checkObject.transform.rotation, layerMask);
         List<Collider> finalOverlaps = new();
         for (int i = 0; i < overlaps.Length; i++) {
             if (overlaps[i].transform != checkObject.transform)
@@ -626,7 +612,7 @@ public class GridPlacement : MonoBehaviour
             for (int i = 0; i < shipParts.Count; i++) {
                 GameObject part = shipParts[i];
                 part.transform.SetParent(parent); // Parent the ship parts under the new airship
-                BlockType type = blockTypes[blocks[part].blockID];
+                BlockType type = blockTypes[blocks[part].blockId];
                 totalWeight += type.weight;
                 weightPosition += type.weight * part.transform.position;
             }
@@ -682,10 +668,10 @@ public class GridPlacement : MonoBehaviour
         blocks[clear] = block; // Clear the block itself
     }
 
-    private void SetFace(GameObject SetObject, int faceID, GameObject attachObject) {
+    private void SetFace(GameObject SetObject, int faceId, GameObject attachObject) {
         // Because a dictionary returns a copy of a struct you cant directly modify it
         Block block = blocks[SetObject];
-        block.InternalSetFace(faceID, attachObject);
+        block.InternalSetFace(faceId, attachObject);
         blocks[SetObject] = block;
     }
 
@@ -697,14 +683,8 @@ public class GridPlacement : MonoBehaviour
         blockTypes.Add(2, new() {blockPrefab = null /* create a slab prefab */, weight = 0.5f, front = true, back = true, left = true, right = true, up = false, down = true });
     }
 
-    private Vector3 FaceIDToVector(int faceID) {
+    private Vector3 FaceIdToVector(int faceId) {
         Vector3[] vectors = { new(0, 0, -1), new(0, 0, 1), new(-1, 0, 0), new(1, 0, 0), new(0, 1, 0), new(0, -1, 0) };
-        return vectors[faceID];
-    }
-
-    public Vector2Int TransformFaceID(Vector2Int faceID, Quaternion rotation) { // Change the faceID according to a rotation
-        Vector3 IDPosition = FaceIDToVector(faceID.x);
-        IDPosition = rotation * IDPosition;
-        return CalculateFaceID(IDPosition);
+        return vectors[faceId - 1];
     }
 }
