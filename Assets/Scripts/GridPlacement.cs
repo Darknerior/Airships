@@ -1,9 +1,8 @@
 using UnityEngine;
 using System.Collections.Generic;
-
 public class GridPlacement : MonoBehaviour
 {
-    public GameObject cubePrefab;
+    public List<GameObject> blockPrefabs; // Temp storage. keep in mind the right index
     public GameObject airshipPrefab;
     private GameObject _previewCube;
     private GameObject _previewAirship;
@@ -28,6 +27,7 @@ public class GridPlacement : MonoBehaviour
     public KeyCode rotnegz;
     public KeyCode roty;
     public KeyCode rotnegy;
+    int parentNum = 1;
     
     public enum PlaceState {
         nothing,
@@ -37,6 +37,8 @@ public class GridPlacement : MonoBehaviour
     };
 
     // Value holders for editing
+    public float scrollThreshold = 0.1f;
+    private int currentBlockId = 0;
     private GameObject editObject;
     private GameObject _previewEditObject;
     private GameObject shipObject;
@@ -47,79 +49,27 @@ public class GridPlacement : MonoBehaviour
     private Transform rotationReference;
     private Vector3 baseRotation;
     private Vector3 relativeRotation;
+    private Vector3 normal;
 
     // Trackers
     private Dictionary<GameObject, Block> blocks; // Integer is the Id of the block
     private Dictionary<int, BlockType> blockTypes;
-    private List<Transform> activeAirships;
-
-    struct BlockType {
-        public float weight; // Weight of the block
-        public GameObject blockPrefab; // The prefab for the block
-        // If this block can attach on that face
-        public bool front;
-        public bool back;
-        public bool left;
-        public bool right;
-        public bool up;
-        public bool down;
-
-        public bool CanAttach(int faceId) {
-            switch (faceId) {
-                case 1: return front;
-                case 2: return back;
-                case 3: return left;
-                case 4: return right;
-                case 5: return up;
-                case 6: return down;
-                default: return false;
-            }
-        }
-    }
-
-    struct Block {
-        public int blockId; // Id of this block
-        // What block is attached to what face
-        public BoxCollider blockCollider; // Store collider to prevent a ton of GetComponent calls
-        public GameObject front; // FaceId 1-6
-        public GameObject back;
-        public GameObject left;
-        public GameObject right;
-        public GameObject up;
-        public GameObject down;
-
-        public void InternalSetFace(int faceId, GameObject attachedBlock)
-        {
-            switch (faceId)
-            {
-                case 1: front = attachedBlock; break;
-                case 2: back = attachedBlock; break;
-                case 3: left = attachedBlock; break;
-                case 4: right = attachedBlock; break;
-                case 5: up = attachedBlock; break;
-                case 6: down = attachedBlock; break;
-            }
-        }
-
-        public bool IsOccupied() {
-            if (front == null || back == null || left == null || right == null || up == null || down == null) return false;
-            return true;
-        }
-    }
+    private Dictionary<Transform, Rigidbody> activeBodies;
+    Queue<GameObject> attachmentCheckObjects;
 
     private void Start() {
         blocks = new();
-        activeAirships = new();
+        activeBodies = new();
         blockTypes = new();
 
-        _previewCube = Instantiate(cubePrefab, Vector3.zero, Quaternion.identity);
+        // Temp
+        SetBlockTypes();
+
+        _previewCube = Instantiate(blockTypes[0].blockPrefab, Vector3.zero, Quaternion.identity);
         SetPreviewOpacity(_previewCube, previewMaterial);
         _previewCube.SetActive(false);
         _boxCollider = _previewCube.GetComponent<BoxCollider>();
         _boxCollider.isTrigger = true; //Prevent player colliding with preview
-
-        // Temp
-        SetBlockTypes();
     }
 
     private void Update() {
@@ -133,6 +83,8 @@ public class GridPlacement : MonoBehaviour
                 case PlaceState.edit: EditCube(hit); break;
                 case PlaceState.editShip: EditShip(hit); break;
             }
+
+            PlacementManager(hit);
         }
         else _previewCube.SetActive(false);
     }
@@ -180,6 +132,37 @@ public class GridPlacement : MonoBehaviour
         }
     }
 
+    private void PlacementManager(RaycastHit hit) {
+        if (Input.GetMouseButtonDown(0) && GetOverlaps(_previewCube, _boxCollider.size - new Vector3(0.002f, 0.002f, 0.002f), collisionLayer ).Length == 0) { // Left mouse click
+
+            if (state == PlaceState.place) {
+                GameObject placedObject = CreateBlock(currentBlockId, _previewCube.transform.position, _previewCube.transform.rotation);
+                CombineAdjacentBlocks(placedObject);
+            }
+
+            if (state == PlaceState.edit) {
+                editObject.SetActive(true);
+                RemoveWeights(editObject.transform.parent, new List<GameObject> { editObject });
+                ManageDetachment(editObject); // Clear the face attachments of the edited block
+                editObject.transform.position = _previewCube.transform.position;
+                editObject.transform.rotation = _previewCube.transform.rotation;
+                CombineAdjacentBlocks(editObject);
+                CancelEdit();
+            }
+
+            if (state == PlaceState.editShip && !ShipOverlaps(_previewAirship)) {
+                shipObject.SetActive(true);
+                shipObject.transform.position = _previewAirship.transform.position;
+                shipObject.transform.rotation = _previewAirship.transform.rotation;
+                foreach (Transform child in shipObject.transform) {
+                    ClearFaces(child.gameObject);
+                    CombineAdjacentBlocks(child.gameObject);
+                }
+                CancelEditShip();
+            }
+        }
+    }
+
     private void CancelEditShip() {
         shipObject.SetActive(true);
         shipObject = null;
@@ -194,6 +177,7 @@ public class GridPlacement : MonoBehaviour
         editObject = null;
         _previewCube.SetActive(false);
         relativeRotation = Vector3.zero;
+        currentBlockId = 0;
         state = PlaceState.nothing;
     }
 
@@ -204,33 +188,7 @@ public class GridPlacement : MonoBehaviour
     }
 
     private void EditShip(RaycastHit hit) {
-        rotationReference = hit.collider.transform;
-        var placementPosition = CalculatePlacementPosition(hit, _previewEditObject);
-        _previewAirship.transform.position = placementPosition - editOffset;
-
-        baseRotation = GetBaseRotation(1, _previewEditObject, hit);
-
-        Vector3 originalPosition = _previewEditObject.transform.position;
-
-        _previewAirship.transform.rotation = Quaternion.Euler(baseRotation + relativeRotation);
-        Vector3 offset = _previewEditObject.transform.position - originalPosition; // Rotating might offset the editObject, so we adjust for that
-        _previewAirship.transform.position -= offset;
-
-        relativeRotation += GetRotation(1, _previewEditObject, hit);
-        _previewAirship.transform.rotation = Quaternion.Euler(baseRotation + relativeRotation);
-        offset = _previewEditObject.transform.position - originalPosition;
-        _previewAirship.transform.position -= offset;
-
-        if (Input.GetMouseButtonDown(0) && !ShipOverlaps(_previewAirship)) {
-            shipObject.SetActive(true);
-            shipObject.transform.position = _previewAirship.transform.position;
-            shipObject.transform.rotation = _previewAirship.transform.rotation;
-            foreach (Transform child in shipObject.transform) {
-                SidesCheck(child.gameObject);
-            }
-            ShipCheck();
-            CancelEditShip();
-        }
+        SetPreviewShip(hit);
     }
 
     private void EditCube(RaycastHit hit) {
@@ -245,11 +203,32 @@ public class GridPlacement : MonoBehaviour
         }
 
         editObject.SetActive(false);
-        PlaceCube(hit);
+        SetPreviewCube(hit);
         return;
     }
 
     private void PlaceCube(RaycastHit hit) {
+        BlockPicker();
+        SetPreviewCube(hit);
+    }
+
+    private void BlockPicker() {
+        int scrolls = (int)Input.mouseScrollDelta.y;
+        int newBlockId = (currentBlockId + scrolls) % blockTypes.Keys.Count;
+        if (newBlockId < 0) {
+            newBlockId += blockTypes.Keys.Count;
+        }
+
+        if (newBlockId != currentBlockId) {
+            currentBlockId = newBlockId;
+            Destroy(_previewCube);
+            _previewCube = CreatePreviewBlock(newBlockId);
+            _boxCollider = _previewCube.GetComponent<BoxCollider>();
+            _boxCollider.isTrigger = true;
+        }
+    }
+
+    private void SetPreviewCube(RaycastHit hit) {
         _previewCube.SetActive(true);
 
         // Adjust position to either ground hit or snap point
@@ -257,33 +236,41 @@ public class GridPlacement : MonoBehaviour
         var placementPosition = CalculatePlacementPosition(hit, _previewCube);
         _previewCube.transform.position = placementPosition;
 
-        baseRotation = GetBaseRotation(1, _previewCube, hit);
+        baseRotation = GetBaseRotation(currentBlockId, _previewCube, hit);
 
         _previewCube.transform.rotation = Quaternion.Euler(baseRotation + relativeRotation);
-        relativeRotation += GetRotation(1, _previewCube, hit);
+        relativeRotation += GetRotation(currentBlockId, _previewCube, hit);
 
         _previewCube.transform.rotation = Quaternion.Euler(baseRotation + relativeRotation);
+    }
 
-        if (Input.GetMouseButtonDown(0) && GetOverlaps(_previewCube, _boxCollider.size - new Vector3(0.002f, 0.002f, 0.002f), collisionLayer ).Length == 0) { // Left mouse click
-            var placedObject = editObject;
+    GameObject CreatePreviewBlock(int blockId) {
+        GameObject newPreviewBlock = Instantiate(blockTypes[blockId].blockPrefab);
+        SetPreviewOpacity(newPreviewBlock, previewMaterial);
+        return newPreviewBlock;
+    }
 
-            if (editObject == null) {
-                placedObject = CreateBlock(1, cubePrefab, placementPosition, _previewCube.transform.rotation);
-            }
-            else {
-                placedObject.SetActive(true);
-                placedObject.transform.position = placementPosition;
-                placedObject.transform.rotation = _previewCube.transform.rotation;
-                ClearFaces(placedObject); // Clear the face attachments of the edited block
-                CancelEdit();
-            }
+    private void SetPreviewShip(RaycastHit hit) {
+        rotationReference = hit.collider.transform;
+        var placementPosition = CalculatePlacementPosition(hit, _previewEditObject);
+        _previewAirship.transform.position = placementPosition - editOffset;
 
-            SidesCheck(placedObject);
-            ShipCheck();
-        }
+        baseRotation = GetBaseRotation(currentBlockId, _previewEditObject, hit);
+
+        Vector3 originalPosition = _previewEditObject.transform.position;
+
+        _previewAirship.transform.rotation = Quaternion.Euler(baseRotation + relativeRotation);
+        Vector3 offset = _previewEditObject.transform.position - originalPosition; // Rotating might offset the editObject, so we adjust for that
+        _previewAirship.transform.position -= offset;
+
+        relativeRotation += GetRotation(currentBlockId, _previewEditObject, hit);
+        _previewAirship.transform.rotation = Quaternion.Euler(baseRotation + relativeRotation);
+        offset = _previewEditObject.transform.position - originalPosition;
+        _previewAirship.transform.position -= offset;
     }
 
     private Vector3 CalculatePlacementPosition(RaycastHit hit, GameObject placementCube) {
+        normal = hit.normal;
         var placementPosition = new Vector3(0,0,0);
 
         previousHitRotation = hit.collider.transform.rotation;
@@ -292,7 +279,7 @@ public class GridPlacement : MonoBehaviour
         Transform closestSnapPoint;
 
         if (hit.collider.gameObject.layer == _airshipLayer) {
-            closestSnapPoint = GetClosestSnapPoint(hit.point, hit.collider.gameObject);
+            closestSnapPoint = GetBiasedSnapPoint(hit.point, hit.collider.gameObject);
             if (closestSnapPoint != null)
             {
                 // If a snap point is found, set pos
@@ -300,7 +287,7 @@ public class GridPlacement : MonoBehaviour
             }
         }
         else placementPosition = hit.point; //Set the location to the point at the ground we are looking at
-        placementPosition += GetOffset(hit.normal);
+        placementPosition += GetOffset(normal);
 
         Vector3 difference = placementPosition - placementCube.transform.position;
         placementCube.transform.position += difference;
@@ -312,7 +299,7 @@ public class GridPlacement : MonoBehaviour
 
             for (int i = 0; i < surroundingCubes.Length; i++) {
                 Collider collider = surroundingCubes[i];
-                var newClosestSnapPoint = GetClosestSnapPoint(hit.point, collider.gameObject);
+                var newClosestSnapPoint = GetSnapPoint(hit.point, collider.gameObject);
                 float distance = Vector3.Distance(newClosestSnapPoint.position, hit.point);
                 if (distance < closestDistance) {
                     closestDistance = distance;
@@ -322,7 +309,7 @@ public class GridPlacement : MonoBehaviour
 
             if (closestSurroundingSnapPoint != null) {
                 if (Physics.Raycast(Camera.main.transform.position, closestSurroundingSnapPoint.position - Camera.main.transform.position, out RaycastHit newHit, Mathf.Infinity, airshipLayer)) {
-                    hit.normal = newHit.normal; // Change the hit.normal to the newHit.normal
+                    normal = newHit.normal; // Change the hit.normal to the newHit.normal
                     closestSnapPoint = closestSurroundingSnapPoint;
                     placementPosition = closestSnapPoint.position + GetOffset(newHit.normal);
                     previousHitBlock = closestSnapPoint.parent;
@@ -334,7 +321,7 @@ public class GridPlacement : MonoBehaviour
         placementCube.transform.position -= difference;
 
         // Check if hit object is part of the airship and find the closest snap point if applicable
-        int snapFaceId = CalculateLocalFaceId(hit.normal, hit.collider.transform);
+        int snapFaceId = CalculateLocalFaceId(normal, hit.collider.transform);
         if (hit.collider.transform != previousHitBlock || rotationReference.rotation != previousHitRotation || snapFaceId != previousSnapId) {
             relativeRotation = Vector3.zero;
         }
@@ -388,11 +375,11 @@ public class GridPlacement : MonoBehaviour
                         rotations++;
                         rotObject.transform.Rotate(rotationStep, Space.World);
                         finalRotation += rotationStep;
-                        int snapFaces = CalculateLocalFaceId(hit.normal, hit.collider.transform); // Get local faceId for accurate attachment check
+                        int snapFaces = CalculateLocalFaceId(normal, hit.collider.transform); // Get local faceId for accurate attachment check
                         canAttach = blockType.CanAttach(snapFaces);
                         if (GetOverlaps(rotObject, _boxCollider.size - new Vector3(0.002f, 0.002f, 0.002f), collisionLayer).Length > 0) canAttach = false;
                         if (state == PlaceState.editShip && ShipOverlaps(_previewAirship)) canAttach = false; // Check if we are editing a ship and check if it overlaps with anything
-                        if (rotations == 3) return Vector3.zero;
+                        if (rotations == 4) return Vector3.zero;
                     }
 
                     rotObject.transform.rotation = originalRotation;
@@ -408,7 +395,7 @@ public class GridPlacement : MonoBehaviour
 
     private Vector3 GetBaseRotation(int blockId, GameObject rotObject, RaycastHit hit) {
         rotObject.transform.rotation = rotationReference.rotation;
-        Collider[] overlaps = GetOverlaps(rotObject, _boxCollider.size, airshipLayer);
+        Collider[] overlaps = GetOverlaps(rotObject, _boxCollider.size + new Vector3(0.002f, 0.002f, 0.002f), airshipLayer);
         if (overlaps.Length == 0) return Vector3.zero;
         List<int> attachedIds = new();
 
@@ -450,16 +437,47 @@ public class GridPlacement : MonoBehaviour
         return rotations[selfId, attachId] + rotationReference.eulerAngles;
     }
 
-    private Transform GetClosestSnapPoint(Vector3 hitPoint, GameObject hitObject) {
+    private Transform GetBiasedSnapPoint(Vector3 hitPoint, GameObject hitObject) {
         Transform closestSnapPoint = null;
-        var closestDistance = Mathf.Infinity;
+        var bestValue = Mathf.Infinity;
 
         foreach (Transform child in hitObject.transform) {
             if (!child.CompareTag("SnapPoint")) continue;
             var distance = Vector3.Distance(hitPoint, child.position);
-            if (!(distance < closestDistance)) continue;
+            var newNormal = (child.position - hitObject.transform.position).normalized;
+            // Get the angle from the normal of the snappoint and the camera. do % 180 to disregard - angles. normalize it and divide it by a number to set theweight of the angle
+            var angleFromPoint = Vector3.Angle(newNormal, Camera.main.transform.forward) % 180f / 180f / 4f;
+            var newBestValue = distance + angleFromPoint;
+
+            if (bestValue < newBestValue || Physics.OverlapBox(child.position + GetOffset(newNormal), _boxCollider.size / 2f - new Vector3(0.002f, 0.002f, 0.002f), hitObject.transform.rotation, placementLayer).Length > 0) continue;
             closestSnapPoint = child;
-            closestDistance = distance;
+            bestValue = newBestValue;
+        }
+        if (closestSnapPoint != null) {
+            normal = (closestSnapPoint.position - hitObject.transform.position).normalized;
+            rotationReference = closestSnapPoint;
+        }
+
+        return closestSnapPoint;
+    }
+
+    private Transform GetSnapPoint(Vector3 hitPoint, GameObject hitObject) {
+        Transform closestSnapPoint = null;
+        var bestValue = Mathf.Infinity;
+
+        foreach (Transform child in hitObject.transform) {
+            if (!child.CompareTag("SnapPoint")) continue;
+            var distance = Vector3.Distance(hitPoint, child.position);
+            var newNormal = (child.position - hitObject.transform.position).normalized;
+            var newBestValue = distance;
+
+            if (bestValue < newBestValue) continue;
+            closestSnapPoint = child;
+            bestValue = newBestValue;
+        }
+        if (closestSnapPoint != null) {
+            normal = (closestSnapPoint.position - hitObject.transform.position).normalized;
+            rotationReference = closestSnapPoint;
         }
 
         return closestSnapPoint;
@@ -471,12 +489,28 @@ public class GridPlacement : MonoBehaviour
         renderer.material = cloneMat;
     }
 
-    private GameObject CreateBlock(int blockId, GameObject prefab, Vector3 position, Quaternion rotation) {
-        GameObject blockObject = Instantiate(prefab, position, rotation);
+    private GameObject CreateBlock(int blockId, Vector3 position, Quaternion rotation) {
+        GameObject blockObject = Instantiate(blockTypes[blockId].blockPrefab, position, rotation);
         blockObject.layer = _airshipLayer;
         Block block = new Block() {blockCollider = blockObject.GetComponent<BoxCollider>(), blockId = blockId};
         blocks.Add(blockObject, block);
         return blockObject;
+    }
+
+    private GameObject CreateShip(List<GameObject> airshipBlocks) {
+        GameObject airshipObject = Instantiate(airshipPrefab);
+        airshipObject.name = parentNum.ToString();
+        parentNum++;
+        Rigidbody airshipBody = airshipObject.GetComponent<Rigidbody>();
+        activeBodies.Add(airshipObject.transform, airshipBody);
+        ReParentBlocks(airshipObject.transform, airshipBlocks);
+        RecalculateWeights(airshipObject.transform);
+        return airshipObject;
+    }
+
+    private void DestroyShip(Transform ship) {
+        activeBodies.Remove(ship);
+        Destroy(ship.gameObject);
     }
 
     private GameObject CreatePreviewShip(GameObject copyShip) {
@@ -535,7 +569,7 @@ public class GridPlacement : MonoBehaviour
         return Id;
     }
 
-    private void SidesCheck(GameObject checkObject) {
+    private void CombineAdjacentBlocks(GameObject checkObject) {
         Collider[] overlaps = GetOverlaps(checkObject, _boxCollider.size + new Vector3(0.002f, 0.002f, 0.002f), airshipLayer);
 
         for (int i = 0; i < overlaps.Length; i++) {
@@ -544,12 +578,20 @@ public class GridPlacement : MonoBehaviour
             Vector3 objectDirection = colTransform.position - checkObject.transform.position;
             int selfFaceId = CalculateLocalFaceId(objectDirection, checkObject.transform); // Check which face the object is near
 
-            if (IsAligned(checkObject.transform, objectDirection, selfFaceId)) // Check if the object is directly next to it
+            if (IsAligned(checkObject.transform, objectDirection, selfFaceId)) // Check if the object is directly on it
             {
                 SetFace(checkObject, selfFaceId, colTransform.gameObject); // Attach the object to itself
                 int attachFaceId = CalculateLocalFaceId(-objectDirection, colTransform);
                 SetFace(colTransform.gameObject, attachFaceId, checkObject); // Attach itself to the object
+                if (colTransform.parent != checkObject.transform) {
+                    checkObject.transform.SetParent(colTransform.parent); 
+                    AddWeights(colTransform.parent, new List<GameObject> { checkObject } );
+                }
             }
+        }
+
+        if (checkObject.transform.parent == null) {
+            CreateShip(new List<GameObject> { checkObject });
         }
     }
 
@@ -567,6 +609,56 @@ public class GridPlacement : MonoBehaviour
 
         return Vector3.Angle(angleVector, objectDirection) < 1f;
     }
+
+    private void ReParentBlocks(Transform newParent, List<GameObject> reparentBlocks) {
+        for (int i = 0; i < reparentBlocks.Count; i++) {
+            reparentBlocks[i].transform.SetParent(newParent);
+        }
+    }
+
+    private void RecalculateWeights(Transform ship) {
+        Rigidbody shipBody = activeBodies[ship];
+        float totalMass = 0;
+        Vector3 weightedMass = Vector3.zero;
+        foreach (Transform child in ship) {
+            float weight = blockTypes[blocks[child.gameObject].blockId].weight;
+            totalMass += weight;
+            weightedMass += child.position * weight;
+        }
+
+        shipBody.centerOfMass = ship.InverseTransformPoint(weightedMass / totalMass);
+        shipBody.WakeUp();
+    }
+
+    private void RemoveWeights(Transform ship, List<GameObject> removeBlocks) {
+        Rigidbody shipBody = activeBodies[ship];
+        float totalMass = shipBody.mass;
+        Vector3 weightedMass = shipBody.worldCenterOfMass * totalMass;
+        for (int i = 0; i < removeBlocks.Count; i++) {
+            float weight = -blockTypes[blocks[removeBlocks[i]].blockId].weight;
+            totalMass += weight;
+            weightedMass += removeBlocks[i].transform.position * weight;
+        }
+
+        shipBody.mass = totalMass;
+        shipBody.centerOfMass = ship.InverseTransformPoint(weightedMass / totalMass);
+        shipBody.WakeUp();
+    }
+
+    private void AddWeights(Transform ship, List<GameObject> addBlocks) {
+        Rigidbody shipBody = activeBodies[ship];
+        float totalMass = shipBody.mass;
+        Vector3 weightedMass = shipBody.mass * shipBody.worldCenterOfMass;
+        for (int i = 0; i < addBlocks.Count; i++) {
+            float weight = blockTypes[blocks[addBlocks[i]].blockId].weight;
+            totalMass += weight;
+            weightedMass += addBlocks[i].transform.position * weight;
+        }
+
+        shipBody.mass = totalMass;
+        shipBody.centerOfMass = ship.InverseTransformPoint(weightedMass / totalMass);
+        shipBody.WakeUp();
+    }
     
     private Collider[] GetOverlaps(GameObject checkObject, Vector3 extents, LayerMask layerMask)
     {
@@ -582,90 +674,91 @@ public class GridPlacement : MonoBehaviour
         return finalOverlaps.ToArray();
     }
 
-    private void ShipCheck() {
-        List<GameObject> blocksLeft = new();
-        List<GameObject> shipParts = new();
-        foreach (GameObject key in blocks.Keys) {
-            blocksLeft.Add(key); // Get all blocks in a tracker list
-        }
-
-        int shipIndex = 0;
-        int shipsAvailable = activeAirships.Count;
-
-        while (blocksLeft.Count > 0) {
-            shipParts.Clear();
-            GameObject block = blocksLeft[0];
-            FloodFill(ref blocksLeft, ref shipParts, block); // Get all 
-
-            Transform parent;
-            if (shipIndex < shipsAvailable)
-                parent = activeAirships[shipIndex];
-            else {
-                parent = Instantiate(airshipPrefab).transform;
-                activeAirships.Add(parent); // Lists add new indices at the end to we can safely do this without needing index adjustments
+    private void ClearFaces(GameObject clearObject) {
+        Block block = blocks[clearObject];
+        // Remove the block from the objects it was attached to
+        for (int i = 1; i <= 6; i++) {
+            GameObject faceObject = block.GetFace(i);
+            if (faceObject != null) {
+                Block newBlock = blocks[faceObject];
+                newBlock.DetachObject(clearObject);
+                blocks[faceObject] = newBlock;
             }
-
-            Rigidbody shipBody = parent.gameObject.GetComponent<Rigidbody>();
-            float totalWeight = 0;
-            Vector3 weightPosition = Vector3.zero;
-
-            for (int i = 0; i < shipParts.Count; i++) {
-                GameObject part = shipParts[i];
-                part.transform.SetParent(parent); // Parent the ship parts under the new airship
-                BlockType type = blockTypes[blocks[part].blockId];
-                totalWeight += type.weight;
-                weightPosition += type.weight * part.transform.position;
-            }
-
-            shipBody.centerOfMass = parent.transform.InverseTransformPoint(weightPosition / totalWeight); // Set the correct center of mass according to the weight of the blocks and their positions
-            shipBody.mass = totalWeight;
-
-            shipBody.WakeUp();
-
-            shipIndex++;
         }
 
-        while (shipIndex < activeAirships.Count) {
-            Transform removedShip = activeAirships[shipIndex];
-            activeAirships.Remove(removedShip);
-            Destroy(removedShip.gameObject); // Destroy the excess empty ships
-        }
-    }
-
-    private void FloodFill(ref List<GameObject> blocksLeft, ref List<GameObject> shipParts, GameObject checkObject)
-    {
-        Queue<GameObject> checkQueue = new();
-        checkQueue.Enqueue(checkObject);
-        while(checkQueue.Count> 0)
-        {
-            GameObject currentObject = checkQueue.Dequeue();
-            blocksLeft.Remove(currentObject);
-            shipParts.Add(currentObject);
-            Block block = blocks[currentObject];
-
-            if (block.front != null && blocksLeft.Contains(block.front)) checkQueue.Enqueue(block.front);
-            if (block.back != null && blocksLeft.Contains(block.back)) checkQueue.Enqueue(block.back);
-            if (block.left != null && blocksLeft.Contains(block.left)) checkQueue.Enqueue(block.left);
-            if (block.right != null && blocksLeft.Contains(block.right)) checkQueue.Enqueue(block.right);
-            if (block.up != null && blocksLeft.Contains(block.up)) checkQueue.Enqueue(block.up);
-            if (block.down != null && blocksLeft.Contains(block.down)) checkQueue.Enqueue(block.down);
-        }
-    }
-
-    private void ClearFaces(GameObject clear) {
-        Block block = blocks[clear];
-        // Remove the block from the objects it was attached to as well
-        if (block.front != null) SetFace(block.front, 2, null);
-        if (block.back != null) SetFace(block.back, 1, null);
-        if (block.left != null) SetFace(block.left, 4, null);
-        if (block.right != null) SetFace(block.right, 3, null);
-        if (block.up != null) SetFace(block.up, 6, null);
-        if (block.down != null) SetFace(block.down, 5, null);
-
-        for (int i = 0; i < 6; i++) {
+        for (int i = 1; i <= 6; i++) {
             block.InternalSetFace(i, null);
         }
-        blocks[clear] = block; // Clear the block itself
+        blocks[clearObject] = block; // Clear the block itself
+        clearObject.transform.SetParent(null);
+    }
+
+    private void ManageDetachment(GameObject removedObject) {
+        Block block = blocks[removedObject];
+        List<GameObject> attachedBlocks = new();
+        // Remove the block from the objects it was attached to as well
+        for (int i = 1; i <= 6; i++) {
+            GameObject faceObject = block.GetFace(i);
+            if (faceObject != null) {
+                attachedBlocks.Add(faceObject);
+            }
+        }
+
+        Transform baseParent = removedObject.transform.parent;
+        ClearFaces(removedObject);
+        List<List<GameObject>> ships = new();
+
+        int biggestList = 0;
+        int biggestListSize = 0;
+        while (attachedBlocks.Count > 0) {
+            GameObject baseBlock = attachedBlocks[0];
+            attachedBlocks.Remove(baseBlock);
+            List<GameObject> connectedBlocks = GraphTraversal(baseBlock, ref attachedBlocks); // Check if baseblock is attached to any of the pathfindblocks using clear position as a reference point
+            ships.Add(connectedBlocks);
+            if (connectedBlocks.Count > biggestListSize) {
+                biggestList = ships.Count;
+                biggestListSize = connectedBlocks.Count;
+            }
+        }
+
+        if (biggestList != 0) {
+            ships.RemoveAt(biggestList - 1);
+        }
+
+        foreach (List<GameObject> connectedBlocks in ships) {
+            RemoveWeights(baseParent, connectedBlocks);
+            CreateShip(connectedBlocks);
+        }
+
+        if (baseParent.childCount == 0) {
+            DestroyShip(baseParent);
+        }
+    } 
+
+    private List<GameObject> GraphTraversal(GameObject baseBlock, ref List<GameObject> trackBlocks) { // Pathfind towards the referenceposition using while checking if the current block is part of trackblocks
+        Queue<GameObject> traversalQueue = new();
+        List<GameObject> connectedBlocks = new();
+
+        traversalQueue.Enqueue(baseBlock);
+        connectedBlocks.Add(baseBlock);
+
+        while (traversalQueue.Count > 0) {
+            GameObject blockObj = traversalQueue.Dequeue();
+            Block block = blocks[blockObj];
+            if (trackBlocks.Contains(blockObj)) {
+                trackBlocks.Remove(blockObj);
+            }
+
+            for (int i = 1; i <= 6; i++) {
+                GameObject attachedBlock = block.GetFace(i);
+                if (attachedBlock != null && !connectedBlocks.Contains(attachedBlock)) {
+                    traversalQueue.Enqueue(attachedBlock);
+                    connectedBlocks.Add(attachedBlock);
+                }
+            }
+        }
+
+        return connectedBlocks;
     }
 
     private void SetFace(GameObject SetObject, int faceId, GameObject attachObject) {
@@ -678,13 +771,84 @@ public class GridPlacement : MonoBehaviour
     private void SetBlockTypes()
     {
         // Regular cube
-        blockTypes.Add(1, new() {blockPrefab = cubePrefab, weight = 1, front = true, back = true, left = true, right = true, up = true, down = true });
+        blockTypes.Add(0, new() {blockPrefab = blockPrefabs[0], weight = 1, front = true, back = true, left = true, right = true, up = true, down = true });
         // Slab
-        blockTypes.Add(2, new() {blockPrefab = null /* create a slab prefab */, weight = 0.5f, front = true, back = true, left = true, right = true, up = false, down = true });
+        blockTypes.Add(1, new() {blockPrefab = blockPrefabs[1], weight = 0.5f, front = true, back = true, left = true, right = true, up = false, down = true });
     }
 
     private Vector3 FaceIdToVector(int faceId) {
         Vector3[] vectors = { new(0, 0, -1), new(0, 0, 1), new(-1, 0, 0), new(1, 0, 0), new(0, 1, 0), new(0, -1, 0) };
         return vectors[faceId - 1];
+    }
+
+    struct BlockType {
+        public float weight; // Weight of the block
+        public GameObject blockPrefab; // The prefab for the block
+        // If this block can attach on that face
+        public bool front;
+        public bool back;
+        public bool left;
+        public bool right;
+        public bool up;
+        public bool down;
+
+        public bool CanAttach(int faceId) {
+            switch (faceId) {
+                case 1: return front;
+                case 2: return back;
+                case 3: return left;
+                case 4: return right;
+                case 5: return up;
+                case 6: return down;
+                default: return false;
+            }
+        }
+    }
+
+    struct Block {
+        public int blockId; // Id of this block
+        // What block is attached to what face
+        public BoxCollider blockCollider; // Store collider to prevent a ton of GetComponent calls
+        public GameObject front; // FaceId 1-6
+        public GameObject back;
+        public GameObject left;
+        public GameObject right;
+        public GameObject up;
+        public GameObject down;
+
+        public void InternalSetFace(int faceId, GameObject attachedBlock)
+        {
+            switch (faceId)
+            {
+                case 1: front = attachedBlock; break;
+                case 2: back = attachedBlock; break;
+                case 3: left = attachedBlock; break;
+                case 4: right = attachedBlock; break;
+                case 5: up = attachedBlock; break;
+                case 6: down = attachedBlock; break;
+            }
+        }
+
+        public GameObject GetFace(int faceId) {
+            switch (faceId)
+            {
+                case 1: return front;
+                case 2: return back;
+                case 3: return left;
+                case 4: return right;
+                case 5: return up;
+                case 6: return down;
+                default: return null;
+            }
+        }
+
+        public void DetachObject(GameObject detachObject) {
+            for (int i = 1; i <= 6; i++) {
+                if (GetFace(i) == detachObject) {
+                    InternalSetFace(i, null);
+                    return;
+                }
+            }
+        }
     }
 }
