@@ -2,7 +2,7 @@ using UnityEngine;
 using System.Collections.Generic;
 public class GridPlacement : MonoBehaviour
 {
-    public List<GameObject> blockPrefabs; // Temp storage. keep in mind the right index
+    public BlockType[] blockTypes;
     public GameObject airshipPrefab;
     private GameObject _previewCube;
     private GameObject _previewAirship;
@@ -27,7 +27,7 @@ public class GridPlacement : MonoBehaviour
     public KeyCode rotnegz;
     public KeyCode roty;
     public KeyCode rotnegy;
-    int parentNum = 1;
+    int parentNum = 1; // easy parent tracking
     
     public enum PlaceState {
         nothing,
@@ -37,7 +37,6 @@ public class GridPlacement : MonoBehaviour
     };
 
     // Value holders for editing
-    public float scrollThreshold = 0.1f;
     private int currentBlockId = 0;
     private GameObject editObject;
     private GameObject _previewEditObject;
@@ -53,17 +52,12 @@ public class GridPlacement : MonoBehaviour
 
     // Trackers
     private Dictionary<GameObject, Block> blocks; // Integer is the Id of the block
-    private Dictionary<int, BlockType> blockTypes;
     private Dictionary<Transform, Rigidbody> activeBodies;
     Queue<GameObject> attachmentCheckObjects;
 
     private void Start() {
         blocks = new();
         activeBodies = new();
-        blockTypes = new();
-
-        // Temp
-        SetBlockTypes();
 
         _previewCube = Instantiate(blockTypes[0].blockPrefab, Vector3.zero, Quaternion.identity);
         SetPreviewOpacity(_previewCube, previewMaterial);
@@ -133,7 +127,7 @@ public class GridPlacement : MonoBehaviour
     }
 
     private void PlacementManager(RaycastHit hit) {
-        if (Input.GetMouseButtonDown(0) && GetOverlaps(_previewCube, _boxCollider.size - new Vector3(0.002f, 0.002f, 0.002f), collisionLayer ).Length == 0) { // Left mouse click
+        if (Input.GetMouseButtonDown(0) && GetOverlaps(_previewCube, new Vector3(1, 1, 1) - new Vector3(0.002f, 0.002f, 0.002f), collisionLayer ).Length == 0) { // Left mouse click
 
             if (state == PlaceState.place) {
                 GameObject placedObject = CreateBlock(currentBlockId, _previewCube.transform.position, _previewCube.transform.rotation);
@@ -214,9 +208,9 @@ public class GridPlacement : MonoBehaviour
 
     private void BlockPicker() {
         int scrolls = (int)Input.mouseScrollDelta.y;
-        int newBlockId = (currentBlockId + scrolls) % blockTypes.Keys.Count;
+        int newBlockId = (currentBlockId + scrolls) % blockTypes.Length;
         if (newBlockId < 0) {
-            newBlockId += blockTypes.Keys.Count;
+            newBlockId += blockTypes.Length;
         }
 
         if (newBlockId != currentBlockId) {
@@ -292,8 +286,8 @@ public class GridPlacement : MonoBehaviour
         Vector3 difference = placementPosition - placementCube.transform.position;
         placementCube.transform.position += difference;
 
-        if (GetOverlaps(placementCube, _boxCollider.size - new Vector3(0.002f, 0.002f, 0.002f), collisionLayer).Length > 0) { // If you try to place inside another block
-            Collider[] surroundingCubes = GetOverlaps(placementCube, _boxCollider.size * 2f, airshipLayer);
+        if (GetOverlaps(placementCube, new Vector3(1, 1, 1) - new Vector3(0.002f, 0.002f, 0.002f), collisionLayer).Length > 0) { // If you try to place inside another block
+            Collider[] surroundingCubes = GetOverlaps(placementCube, new Vector3(1, 1, 1) * 2f, airshipLayer);
             Transform closestSurroundingSnapPoint = null;
             float closestDistance = float.MaxValue;
 
@@ -332,7 +326,7 @@ public class GridPlacement : MonoBehaviour
     }
 
     private Vector3 GetOffset(Vector3 hitNormal) {
-        var extents = _boxCollider.size * 0.5f;
+        var extents = new Vector3(1, 1, 1) * 0.5f;
 
         // Adjust the placement position by half the placed objects size in the hits normal direction 
         var sideOffset = new Vector3(
@@ -377,7 +371,7 @@ public class GridPlacement : MonoBehaviour
                         finalRotation += rotationStep;
                         int snapFaces = CalculateLocalFaceId(normal, hit.collider.transform); // Get local faceId for accurate attachment check
                         canAttach = blockType.CanAttach(snapFaces);
-                        if (GetOverlaps(rotObject, _boxCollider.size - new Vector3(0.002f, 0.002f, 0.002f), collisionLayer).Length > 0) canAttach = false;
+                        if (GetOverlaps(rotObject, new Vector3(1, 1, 1) - new Vector3(0.002f, 0.002f, 0.002f), collisionLayer).Length > 0) canAttach = false;
                         if (state == PlaceState.editShip && ShipOverlaps(_previewAirship)) canAttach = false; // Check if we are editing a ship and check if it overlaps with anything
                         if (rotations == 4) return Vector3.zero;
                     }
@@ -395,7 +389,7 @@ public class GridPlacement : MonoBehaviour
 
     private Vector3 GetBaseRotation(int blockId, GameObject rotObject, RaycastHit hit) {
         rotObject.transform.rotation = rotationReference.rotation;
-        Collider[] overlaps = GetOverlaps(rotObject, _boxCollider.size + new Vector3(0.002f, 0.002f, 0.002f), airshipLayer);
+        Collider[] overlaps = GetOverlaps(rotObject, new Vector3(1, 1, 1) + new Vector3(0.002f, 0.002f, 0.002f), airshipLayer);
         if (overlaps.Length == 0) return Vector3.zero;
         List<int> attachedIds = new();
 
@@ -449,7 +443,7 @@ public class GridPlacement : MonoBehaviour
             var angleFromPoint = Vector3.Angle(newNormal, Camera.main.transform.forward) % 180f / 180f / 4f;
             var newBestValue = distance + angleFromPoint;
 
-            if (bestValue < newBestValue || Physics.OverlapBox(child.position + GetOffset(newNormal), _boxCollider.size / 2f - new Vector3(0.002f, 0.002f, 0.002f), hitObject.transform.rotation, placementLayer).Length > 0) continue;
+            if (bestValue < newBestValue || Physics.OverlapBox(child.position + GetOffset(newNormal), new Vector3(1, 1, 1) / 2f - new Vector3(0.002f, 0.002f, 0.002f), hitObject.transform.rotation, placementLayer).Length > 0) continue;
             closestSnapPoint = child;
             bestValue = newBestValue;
         }
@@ -528,7 +522,7 @@ public class GridPlacement : MonoBehaviour
 
     private bool ShipOverlaps(GameObject checkShip) {
         foreach (Transform child in checkShip.transform) {
-            if (GetOverlaps(child.gameObject, _boxCollider.size - new Vector3(0.002f, 0.002f, 0.002f), collisionLayer).Length > 0) {
+            if (GetOverlaps(child.gameObject, new Vector3(1, 1, 1) - new Vector3(0.002f, 0.002f, 0.002f), collisionLayer).Length > 0) {
                 return true;
             }
         }
@@ -570,7 +564,7 @@ public class GridPlacement : MonoBehaviour
     }
 
     private void CombineAdjacentBlocks(GameObject checkObject) {
-        Collider[] overlaps = GetOverlaps(checkObject, _boxCollider.size + new Vector3(0.002f, 0.002f, 0.002f), airshipLayer);
+        Collider[] overlaps = GetOverlaps(checkObject, new Vector3(1, 1, 1) + new Vector3(0.002f, 0.002f, 0.002f), airshipLayer);
 
         for (int i = 0; i < overlaps.Length; i++) {
             Collider collider = overlaps[i];
@@ -768,20 +762,13 @@ public class GridPlacement : MonoBehaviour
         blocks[SetObject] = block;
     }
 
-    private void SetBlockTypes()
-    {
-        // Regular cube
-        blockTypes.Add(0, new() {blockPrefab = blockPrefabs[0], weight = 1, front = true, back = true, left = true, right = true, up = true, down = true });
-        // Slab
-        blockTypes.Add(1, new() {blockPrefab = blockPrefabs[1], weight = 0.5f, front = true, back = true, left = true, right = true, up = false, down = true });
-    }
-
     private Vector3 FaceIdToVector(int faceId) {
         Vector3[] vectors = { new(0, 0, -1), new(0, 0, 1), new(-1, 0, 0), new(1, 0, 0), new(0, 1, 0), new(0, -1, 0) };
         return vectors[faceId - 1];
     }
 
-    struct BlockType {
+    [System.Serializable]
+    public struct BlockType {
         public float weight; // Weight of the block
         public GameObject blockPrefab; // The prefab for the block
         // If this block can attach on that face

@@ -751,9 +751,23 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 49df01de9d7d10a4590efb31dfcb04c7, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  blockPrefabs:
-  - {fileID: 7314423673160077377, guid: e75563652d93ade40a3b0484343ccb74, type: 3}
-  - {fileID: 5148620716642931790, guid: 8cd4ba62efd7b9a41a6c969d1010f9b4, type: 3}
+  blockTypes:
+  - weight: 1
+    blockPrefab: {fileID: 7314423673160077377, guid: e75563652d93ade40a3b0484343ccb74, type: 3}
+    front: 1
+    back: 1
+    left: 1
+    right: 1
+    up: 1
+    down: 1
+  - weight: 0.5
+    blockPrefab: {fileID: 5148620716642931790, guid: 8cd4ba62efd7b9a41a6c969d1010f9b4, type: 3}
+    front: 1
+    back: 1
+    left: 1
+    right: 1
+    up: 0
+    down: 1
   airshipPrefab: {fileID: 8182157964636440639, guid: 9893d1c1b20f2144e8e8b03fbaecce1d, type: 3}
   previewMaterial: {fileID: 2100000, guid: 64cdadfd192f3244483842110995ba50, type: 2}
   placementLayer:
@@ -775,7 +789,6 @@ MonoBehaviour:
   rotnegz: 104
   roty: 118
   rotnegy: 98
-  scrollThreshold: 0.1
 --- !u!1 &585016279
 GameObject:
   m_ObjectHideFlags: 0
