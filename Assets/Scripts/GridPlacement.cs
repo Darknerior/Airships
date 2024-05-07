@@ -3,6 +3,7 @@ using System.Collections.Generic;
 public class GridPlacement : MonoBehaviour
 {
     public BlockType[] blockTypes;
+    public float edgeBias = 0;
     public GameObject airshipPrefab;
     private GameObject _previewCube;
     private GameObject _previewAirship;
@@ -39,6 +40,7 @@ public class GridPlacement : MonoBehaviour
     // Value holders for editing
     private int currentBlockId = 0;
     private GameObject editObject;
+    private MeshRenderer editObjectRenderer;
     private GameObject _previewEditObject;
     private GameObject shipObject;
     private Vector3 editOffset;
@@ -55,6 +57,30 @@ public class GridPlacement : MonoBehaviour
     private Dictionary<Transform, Rigidbody> activeBodies;
     Queue<GameObject> attachmentCheckObjects;
 
+    void OnDrawGizmos()
+    {
+        if (activeBodies != null) {
+            foreach (Rigidbody ship in activeBodies.Values)
+            {
+                Gizmos.color = Color.yellow;
+                Gizmos.DrawSphere(ship.worldCenterOfMass, 1);
+            }
+
+            foreach (Transform ship in activeBodies.Keys) {
+                float totalMass = 0;
+                Vector3 weightedMass = Vector3.zero;
+                foreach (Transform child in ship) {
+                    float weight = blockTypes[blocks[child.gameObject].blockId].weight;
+                    totalMass += weight;
+                    weightedMass += child.position * weight;
+                }
+
+                Gizmos.color = Color.blue;
+                Gizmos.DrawSphere(weightedMass / totalMass, 1);
+            }
+        }
+    }
+
     private void Start() {
         blocks = new();
         activeBodies = new();
@@ -67,6 +93,7 @@ public class GridPlacement : MonoBehaviour
     }
 
     private void Update() {
+        edgeBias = Mathf.Clamp(edgeBias, 0, 1);
         var ray = Camera.main.ScreenPointToRay(Input.mousePosition);
         if (Physics.Raycast(ray, out RaycastHit hit, Mathf.Infinity, placementLayer))
         {
@@ -108,7 +135,8 @@ public class GridPlacement : MonoBehaviour
             }
 
             if (state == PlaceState.edit) {
-                editObject.SetActive(true);
+                editObjectRenderer.enabled = true;
+                editObject.layer = _airshipLayer;
                 shipObject = editObject.transform.parent.gameObject;
                 shipObject.SetActive(false);
                 _previewAirship = CreatePreviewShip(shipObject);
@@ -127,7 +155,7 @@ public class GridPlacement : MonoBehaviour
     }
 
     private void PlacementManager(RaycastHit hit) {
-        if (Input.GetMouseButtonDown(0) && GetOverlaps(_previewCube, new Vector3(1, 1, 1) - new Vector3(0.002f, 0.002f, 0.002f), collisionLayer ).Length == 0) { // Left mouse click
+        if (Input.GetMouseButtonDown(0) && GetOverlaps(_previewCube, _boxCollider.size - new Vector3(0.002f, 0.002f, 0.002f), collisionLayer ).Length == 0) { // Left mouse click
 
             if (state == PlaceState.place) {
                 GameObject placedObject = CreateBlock(currentBlockId, _previewCube.transform.position, _previewCube.transform.rotation);
@@ -135,7 +163,8 @@ public class GridPlacement : MonoBehaviour
             }
 
             if (state == PlaceState.edit) {
-                editObject.SetActive(true);
+                editObjectRenderer.enabled = true;
+                editObject.layer = _airshipLayer;
                 RemoveWeights(editObject.transform.parent, new List<GameObject> { editObject });
                 ManageDetachment(editObject); // Clear the face attachments of the edited block
                 editObject.transform.position = _previewCube.transform.position;
@@ -167,7 +196,8 @@ public class GridPlacement : MonoBehaviour
     }
 
     private void CancelEdit() {
-        editObject.SetActive(true);
+        editObjectRenderer.enabled = true;
+        editObject.layer = _airshipLayer;
         editObject = null;
         _previewCube.SetActive(false);
         relativeRotation = Vector3.zero;
@@ -190,13 +220,16 @@ public class GridPlacement : MonoBehaviour
 
         if (editObject == null && hitObject.layer == _airshipLayer) {
             editObject = hitObject;
+            _previewCube = CreatePreviewBlock(blocks[hitObject].blockId);
+            editObjectRenderer = editObject.GetComponent<MeshRenderer>();
+            editObject.layer = 0;
+            editObjectRenderer.enabled = false;
         } 
         else if (editObject == null) {
             state = PlaceState.nothing;
             return;
         }
 
-        editObject.SetActive(false);
         SetPreviewCube(hit);
         return;
     }
@@ -204,6 +237,12 @@ public class GridPlacement : MonoBehaviour
     private void PlaceCube(RaycastHit hit) {
         BlockPicker();
         SetPreviewCube(hit);
+    }
+
+    private void DestroyBlock(GameObject destroyBlock) {
+        ManageDetachment(destroyBlock);
+        blocks.Remove(destroyBlock);
+        Destroy(destroyBlock);
     }
 
     private void BlockPicker() {
@@ -215,10 +254,7 @@ public class GridPlacement : MonoBehaviour
 
         if (newBlockId != currentBlockId) {
             currentBlockId = newBlockId;
-            Destroy(_previewCube);
             _previewCube = CreatePreviewBlock(newBlockId);
-            _boxCollider = _previewCube.GetComponent<BoxCollider>();
-            _boxCollider.isTrigger = true;
         }
     }
 
@@ -241,6 +277,9 @@ public class GridPlacement : MonoBehaviour
     GameObject CreatePreviewBlock(int blockId) {
         GameObject newPreviewBlock = Instantiate(blockTypes[blockId].blockPrefab);
         SetPreviewOpacity(newPreviewBlock, previewMaterial);
+        _boxCollider = newPreviewBlock.GetComponent<BoxCollider>();
+        _boxCollider.isTrigger = true;
+        Destroy(_previewCube);
         return newPreviewBlock;
     }
 
@@ -440,15 +479,13 @@ public class GridPlacement : MonoBehaviour
             var distance = Vector3.Distance(hitPoint, child.position);
             var newNormal = (child.position - hitObject.transform.position).normalized;
             // Get the angle from the normal of the snappoint and the camera. do % 180 to disregard - angles. normalize it and divide it by a number to set theweight of the angle
-            var angleFromPoint = Vector3.Angle(newNormal, Camera.main.transform.forward) % 180f / 180f / 4f;
+            var angleFromPoint = Vector3.Angle(newNormal, Camera.main.transform.forward) % 180f / 180f * edgeBias;
             var newBestValue = distance + angleFromPoint;
 
             if (bestValue < newBestValue || Physics.OverlapBox(child.position + GetOffset(newNormal), new Vector3(1, 1, 1) / 2f - new Vector3(0.002f, 0.002f, 0.002f), hitObject.transform.rotation, placementLayer).Length > 0) continue;
             closestSnapPoint = child;
             bestValue = newBestValue;
-        }
-        if (closestSnapPoint != null) {
-            normal = (closestSnapPoint.position - hitObject.transform.position).normalized;
+            normal = newNormal;
             rotationReference = closestSnapPoint;
         }
 
@@ -467,10 +504,8 @@ public class GridPlacement : MonoBehaviour
 
             if (bestValue < newBestValue) continue;
             closestSnapPoint = child;
+            normal = newNormal;
             bestValue = newBestValue;
-        }
-        if (closestSnapPoint != null) {
-            normal = (closestSnapPoint.position - hitObject.transform.position).normalized;
             rotationReference = closestSnapPoint;
         }
 
@@ -496,9 +531,10 @@ public class GridPlacement : MonoBehaviour
         airshipObject.name = parentNum.ToString();
         parentNum++;
         Rigidbody airshipBody = airshipObject.GetComponent<Rigidbody>();
+        airshipBody.mass = 0;
         activeBodies.Add(airshipObject.transform, airshipBody);
         ReParentBlocks(airshipObject.transform, airshipBlocks);
-        RecalculateWeights(airshipObject.transform);
+        AddWeights(airshipObject.transform, airshipBlocks);
         return airshipObject;
     }
 
@@ -577,7 +613,7 @@ public class GridPlacement : MonoBehaviour
                 SetFace(checkObject, selfFaceId, colTransform.gameObject); // Attach the object to itself
                 int attachFaceId = CalculateLocalFaceId(-objectDirection, colTransform);
                 SetFace(colTransform.gameObject, attachFaceId, checkObject); // Attach itself to the object
-                if (colTransform.parent != checkObject.transform) {
+                if (colTransform.parent != checkObject.transform.parent) {
                     checkObject.transform.SetParent(colTransform.parent); 
                     AddWeights(colTransform.parent, new List<GameObject> { checkObject } );
                 }
@@ -617,21 +653,22 @@ public class GridPlacement : MonoBehaviour
         foreach (Transform child in ship) {
             float weight = blockTypes[blocks[child.gameObject].blockId].weight;
             totalMass += weight;
-            weightedMass += child.position * weight;
+            weightedMass += child.localPosition * weight;
         }
 
-        shipBody.centerOfMass = ship.InverseTransformPoint(weightedMass / totalMass);
+        shipBody.mass = totalMass;
+        shipBody.centerOfMass = weightedMass / totalMass;
         shipBody.WakeUp();
     }
 
     private void RemoveWeights(Transform ship, List<GameObject> removeBlocks) {
         Rigidbody shipBody = activeBodies[ship];
         float totalMass = shipBody.mass;
-        Vector3 weightedMass = shipBody.worldCenterOfMass * totalMass;
+        Vector3 weightedMass = shipBody.worldCenterOfMass * shipBody.mass;
         for (int i = 0; i < removeBlocks.Count; i++) {
-            float weight = -blockTypes[blocks[removeBlocks[i]].blockId].weight;
-            totalMass += weight;
-            weightedMass += removeBlocks[i].transform.position * weight;
+            float weight = blockTypes[blocks[removeBlocks[i]].blockId].weight;
+            totalMass -= weight;
+            weightedMass -= removeBlocks[i].transform.position * weight;
         }
 
         shipBody.mass = totalMass;
@@ -642,15 +679,15 @@ public class GridPlacement : MonoBehaviour
     private void AddWeights(Transform ship, List<GameObject> addBlocks) {
         Rigidbody shipBody = activeBodies[ship];
         float totalMass = shipBody.mass;
-        Vector3 weightedMass = shipBody.mass * shipBody.worldCenterOfMass;
+        Vector3 weightedMass = shipBody.centerOfMass * totalMass;
         for (int i = 0; i < addBlocks.Count; i++) {
             float weight = blockTypes[blocks[addBlocks[i]].blockId].weight;
             totalMass += weight;
-            weightedMass += addBlocks[i].transform.position * weight;
+            weightedMass += addBlocks[i].transform.localPosition * weight;
         }
 
         shipBody.mass = totalMass;
-        shipBody.centerOfMass = ship.InverseTransformPoint(weightedMass / totalMass);
+        shipBody.centerOfMass = weightedMass / totalMass;
         shipBody.WakeUp();
     }
     
@@ -739,15 +776,15 @@ public class GridPlacement : MonoBehaviour
         while (traversalQueue.Count > 0) {
             GameObject blockObj = traversalQueue.Dequeue();
             Block block = blocks[blockObj];
-            if (trackBlocks.Contains(blockObj)) {
-                trackBlocks.Remove(blockObj);
-            }
 
             for (int i = 1; i <= 6; i++) {
                 GameObject attachedBlock = block.GetFace(i);
                 if (attachedBlock != null && !connectedBlocks.Contains(attachedBlock)) {
                     traversalQueue.Enqueue(attachedBlock);
                     connectedBlocks.Add(attachedBlock);
+                    if (trackBlocks.Contains(blockObj)) {
+                        trackBlocks.Remove(blockObj);
+                    }
                 }
             }
         }
