@@ -4,6 +4,8 @@ public class GridPlacement : MonoBehaviour
 {
     public BlockType[] blockTypes;
     public float edgeBias = 0;
+    public float rayPadding = 0;
+    public float reach = 10;
     public GameObject airshipPrefab;
     private GameObject _previewCube;
     private GameObject _previewAirship;
@@ -12,8 +14,8 @@ public class GridPlacement : MonoBehaviour
     public LayerMask collisionLayer;
     private readonly LayerMask _airshipLayer = 3; // Layer 3 for airships
     public LayerMask airshipLayer;
-
-    private BoxCollider _boxCollider;
+    private readonly Vector3 collisionPadding = new Vector3(-0.002f, -0.002f, -0.002f);
+    private readonly Vector3 overlapPadding = new Vector3(0.002f, 0.002f, 0.002f);
 
     // Temp keybinds
     public KeyCode place;
@@ -45,17 +47,17 @@ public class GridPlacement : MonoBehaviour
     private GameObject shipObject;
     private Vector3 editOffset;
     private Transform previousHitBlock; // Keep track of the previous block hit by the raycast for accurate snaprotation
-    private Quaternion previousHitRotation;
-    private int previousSnapId;
     private Transform rotationReference;
     private Vector3 baseRotation;
     private Vector3 relativeRotation;
+    private Vector3 previousNormal;
     private Vector3 normal;
 
     // Trackers
     private Dictionary<GameObject, Block> blocks; // Integer is the Id of the block
     private Dictionary<Transform, Rigidbody> activeBodies;
     Queue<GameObject> attachmentCheckObjects;
+    private Vector3 intersectPoint;
 
     void OnDrawGizmos()
     {
@@ -79,35 +81,71 @@ public class GridPlacement : MonoBehaviour
                 Gizmos.DrawSphere(weightedMass / totalMass, 1);
             }
         }
+
+        Gizmos.color = Color.red;
+        Gizmos.DrawSphere(intersectPoint, 0.25f);
     }
 
-    private void Start() {
+    private void Awake() {
         blocks = new();
         activeBodies = new();
-
-        _previewCube = Instantiate(blockTypes[0].blockPrefab, Vector3.zero, Quaternion.identity);
-        SetPreviewOpacity(_previewCube, previewMaterial);
-        _previewCube.SetActive(false);
-        _boxCollider = _previewCube.GetComponent<BoxCollider>();
-        _boxCollider.isTrigger = true; //Prevent player colliding with preview
+        CreatePreviewBlock(0);
     }
 
     private void Update() {
         edgeBias = Mathf.Clamp(edgeBias, 0, 1);
-        var ray = Camera.main.ScreenPointToRay(Input.mousePosition);
-        if (Physics.Raycast(ray, out RaycastHit hit, Mathf.Infinity, placementLayer))
+        //var ray = Camera.main.ScreenPointToRay(Input.mousePosition);
+        //if (Physics.Raycast(ray, out RaycastHit hit, Mathf.Infinity, placementLayer))
+        Vector3 direction = Camera.main.transform.forward;
+        Vector3 camPos = Camera.main.transform.position;
+        float paddingRadius = rayPadding * 0.5f;
+
+        Collider closestBlock = null;
+        RaycastHit hit = new();
+
+        if (!Physics.Raycast(camPos, direction, out hit, Mathf.Infinity, airshipLayer))
         {
-            StateManager();
+            Collider[] overlaps = Physics.OverlapCapsule(camPos + direction * paddingRadius, camPos + direction * (reach - paddingRadius), paddingRadius, airshipLayer);
+            if (overlaps.Length > 0)
+            {
+                float closestDistance = float.MaxValue;
 
-            switch (state) { // What to do in each place state
-                case PlaceState.place: PlaceCube(hit); break;
-                case PlaceState.edit: EditCube(hit); break;
-                case PlaceState.editShip: EditShip(hit); break;
+                for (int i = 0; i < overlaps.Length; i++) {
+                    Collider block = overlaps[i];
+                    Vector3 blockPosition = block.transform.position;
+                    Vector3 camToBlock = blockPosition - camPos;
+                    // campos == p1
+                    // direction == v1
+                    // blockpos == p2
+                    // blocktoray == v2
+                    Vector3 projectedOnRay = Vector3.Project(camToBlock, direction);
+                    Vector3 lineIntersection = camPos + projectedOnRay;
+                    intersectPoint = lineIntersection;
+                    float distanceFromRay = Vector3.Distance(lineIntersection, blockPosition);
+                    float closer = Mathf.Min(closestDistance, distanceFromRay);
+                    if (closer < closestDistance && Physics.Raycast(lineIntersection, block.transform.position - lineIntersection, out RaycastHit newHit, Mathf.Infinity, airshipLayer)) {
+                        closestDistance = closer;
+                        closestBlock = block;
+                        hit = newHit;
+                    }
+                }
             }
-
-            PlacementManager(hit);
         }
-        else _previewCube.SetActive(false);
+
+        if (closestBlock == null && !Physics.Raycast(camPos, direction, out hit, Mathf.Infinity, placementLayer)) {
+            _previewCube.SetActive(false);
+            return;
+        }
+
+        StateManager();
+
+        switch (state) { // What to do in each place state
+            case PlaceState.place: PlaceCube(hit); break;
+            case PlaceState.edit: EditCube(hit); break;
+            case PlaceState.editShip: EditShip(hit); break;
+        }
+
+        PlacementManager(hit);
     }
 
     private void StateManager() {
@@ -155,7 +193,7 @@ public class GridPlacement : MonoBehaviour
     }
 
     private void PlacementManager(RaycastHit hit) {
-        if (Input.GetMouseButtonDown(0) && GetOverlaps(_previewCube, _boxCollider.size - new Vector3(0.002f, 0.002f, 0.002f), collisionLayer ).Length == 0) { // Left mouse click
+        if (Input.GetMouseButtonDown(0) && GetOverlaps(_previewCube, collisionPadding, collisionLayer).Length == 0) { // Left mouse click
 
             if (state == PlaceState.place) {
                 GameObject placedObject = CreateBlock(currentBlockId, _previewCube.transform.position, _previewCube.transform.rotation);
@@ -220,7 +258,7 @@ public class GridPlacement : MonoBehaviour
 
         if (editObject == null && hitObject.layer == _airshipLayer) {
             editObject = hitObject;
-            _previewCube = CreatePreviewBlock(blocks[hitObject].blockId);
+            CreatePreviewBlock(blocks[hitObject].blockId);
             editObjectRenderer = editObject.GetComponent<MeshRenderer>();
             editObject.layer = 0;
             editObjectRenderer.enabled = false;
@@ -230,11 +268,13 @@ public class GridPlacement : MonoBehaviour
             return;
         }
 
+        _previewCube.SetActive(true);
         SetPreviewCube(hit);
         return;
     }
 
     private void PlaceCube(RaycastHit hit) {
+        _previewCube.SetActive(true);
         BlockPicker();
         SetPreviewCube(hit);
     }
@@ -254,13 +294,11 @@ public class GridPlacement : MonoBehaviour
 
         if (newBlockId != currentBlockId) {
             currentBlockId = newBlockId;
-            _previewCube = CreatePreviewBlock(newBlockId);
+            CreatePreviewBlock(newBlockId);
         }
     }
 
     private void SetPreviewCube(RaycastHit hit) {
-        _previewCube.SetActive(true);
-
         // Adjust position to either ground hit or snap point
         rotationReference = hit.collider.transform;
         var placementPosition = CalculatePlacementPosition(hit, _previewCube);
@@ -274,13 +312,15 @@ public class GridPlacement : MonoBehaviour
         _previewCube.transform.rotation = Quaternion.Euler(baseRotation + relativeRotation);
     }
 
-    GameObject CreatePreviewBlock(int blockId) {
+    void CreatePreviewBlock(int blockId) {
         GameObject newPreviewBlock = Instantiate(blockTypes[blockId].blockPrefab);
         SetPreviewOpacity(newPreviewBlock, previewMaterial);
-        _boxCollider = newPreviewBlock.GetComponent<BoxCollider>();
-        _boxCollider.isTrigger = true;
+        BoxCollider newCollider = newPreviewBlock.GetComponent<BoxCollider>();
+        newCollider.isTrigger = true;
+        if (_previewCube != null) blocks.Remove(_previewCube);
         Destroy(_previewCube);
-        return newPreviewBlock;
+        _previewCube = newPreviewBlock;
+        blocks.Add(_previewCube, new Block() { blockId = blockId, blockCollider = newCollider });
     }
 
     private void SetPreviewShip(RaycastHit hit) {
@@ -296,7 +336,7 @@ public class GridPlacement : MonoBehaviour
         Vector3 offset = _previewEditObject.transform.position - originalPosition; // Rotating might offset the editObject, so we adjust for that
         _previewAirship.transform.position -= offset;
 
-        relativeRotation += GetRotation(currentBlockId, _previewEditObject, hit);
+        //relativeRotation += GetRotation(currentBlockId, _previewEditObject, hit);
         _previewAirship.transform.rotation = Quaternion.Euler(baseRotation + relativeRotation);
         offset = _previewEditObject.transform.position - originalPosition;
         _previewAirship.transform.position -= offset;
@@ -304,9 +344,8 @@ public class GridPlacement : MonoBehaviour
 
     private Vector3 CalculatePlacementPosition(RaycastHit hit, GameObject placementCube) {
         normal = hit.normal;
-        var placementPosition = new Vector3(0,0,0);
+        var placementPosition = Vector3.zero;
 
-        previousHitRotation = hit.collider.transform.rotation;
         previousHitBlock = hit.collider.transform;
 
         Transform closestSnapPoint;
@@ -320,52 +359,53 @@ public class GridPlacement : MonoBehaviour
             }
         }
         else placementPosition = hit.point; //Set the location to the point at the ground we are looking at
-        placementPosition += GetOffset(normal);
+        placementPosition += GetOffset(_previewCube, normal);
 
-        Vector3 difference = placementPosition - placementCube.transform.position;
-        placementCube.transform.position += difference;
+        GameObject collisionCheckBlock = CreateBlock(currentBlockId, placementPosition, Quaternion.identity);
+        collisionCheckBlock.layer = LayerMask.NameToLayer("Preview");
+        collisionCheckBlock.name = "collisioncheck";
 
-        if (GetOverlaps(placementCube, new Vector3(1, 1, 1) - new Vector3(0.002f, 0.002f, 0.002f), collisionLayer).Length > 0) { // If you try to place inside another block
-            Collider[] surroundingCubes = GetOverlaps(placementCube, new Vector3(1, 1, 1) * 2f, airshipLayer);
-            Transform closestSurroundingSnapPoint = null;
+        if (GetOverlaps(collisionCheckBlock, collisionPadding, collisionLayer).Length > 0) { // If you try to place inside another block
+            Collider[] surroundingCubes = GetOverlaps(placementCube, new Vector3(1, 1, 1), airshipLayer);
             float closestDistance = float.MaxValue;
 
             for (int i = 0; i < surroundingCubes.Length; i++) {
                 Collider collider = surroundingCubes[i];
                 var newClosestSnapPoint = GetSnapPoint(hit.point, collider.gameObject);
-                float distance = Vector3.Distance(newClosestSnapPoint.position, hit.point);
+                float distance = Vector3.Distance(newClosestSnapPoint.position, hit.point) + Vector3.Distance(newClosestSnapPoint.position, Camera.main.transform.position) * 0.5f;
                 if (distance < closestDistance) {
-                    closestDistance = distance;
-                    closestSurroundingSnapPoint = newClosestSnapPoint;
-                }
-            }
+                    Vector3 tempNormal = (newClosestSnapPoint.position - newClosestSnapPoint.parent.position).normalized;
+                    Vector3 tempPlacementPosition = newClosestSnapPoint.position + GetOffset(collisionCheckBlock, tempNormal); 
+                    collisionCheckBlock.transform.rotation = newClosestSnapPoint.parent.rotation;
+                    collisionCheckBlock.transform.position = tempPlacementPosition;
 
-            if (closestSurroundingSnapPoint != null) {
-                if (Physics.Raycast(Camera.main.transform.position, closestSurroundingSnapPoint.position - Camera.main.transform.position, out RaycastHit newHit, Mathf.Infinity, airshipLayer)) {
-                    normal = newHit.normal; // Change the hit.normal to the newHit.normal
-                    closestSnapPoint = closestSurroundingSnapPoint;
-                    placementPosition = closestSnapPoint.position + GetOffset(newHit.normal);
-                    previousHitBlock = closestSnapPoint.parent;
-                    previousHitRotation = closestSnapPoint.parent.rotation;
-                    rotationReference = closestSnapPoint.parent;
+                    if (GetOverlaps(collisionCheckBlock, collisionPadding, collisionLayer).Length > 0) continue;
+
+                    normal = tempNormal;
+                    closestDistance = distance;
+                    closestSnapPoint = newClosestSnapPoint;
+                    placementPosition = tempPlacementPosition;
+                    rotationReference = newClosestSnapPoint.parent;
                 }
             }
         }
-        placementCube.transform.position -= difference;
 
-        // Check if hit object is part of the airship and find the closest snap point if applicable
-        int snapFaceId = CalculateLocalFaceId(normal, hit.collider.transform);
-        if (hit.collider.transform != previousHitBlock || rotationReference.rotation != previousHitRotation || snapFaceId != previousSnapId) {
+        blocks.Remove(collisionCheckBlock);
+        Destroy(collisionCheckBlock);
+
+        if (previousHitBlock != rotationReference || normal != previousNormal) {
+            previousHitBlock = rotationReference;
+            previousNormal = normal;
             relativeRotation = Vector3.zero;
         }
-
-        previousSnapId = snapFaceId;
 
         return placementPosition;
     }
 
-    private Vector3 GetOffset(Vector3 hitNormal) {
-        var extents = new Vector3(1, 1, 1) * 0.5f;
+    private Vector3 GetOffset(GameObject offsetObject, Vector3 hitNormal) {
+        var collider = blocks[offsetObject].blockCollider;
+        var center = offsetObject.transform.TransformPoint(collider.center) - offsetObject.transform.position;
+        var extents = collider.size * 0.5f;
 
         // Adjust the placement position by half the placed objects size in the hits normal direction 
         var sideOffset = new Vector3(
@@ -373,6 +413,8 @@ public class GridPlacement : MonoBehaviour
             hitNormal.y * extents.y,
             hitNormal.z * extents.z
         );
+
+        sideOffset -= center;
 
         return sideOffset;
     }
@@ -410,7 +452,7 @@ public class GridPlacement : MonoBehaviour
                         finalRotation += rotationStep;
                         int snapFaces = CalculateLocalFaceId(normal, hit.collider.transform); // Get local faceId for accurate attachment check
                         canAttach = blockType.CanAttach(snapFaces);
-                        if (GetOverlaps(rotObject, new Vector3(1, 1, 1) - new Vector3(0.002f, 0.002f, 0.002f), collisionLayer).Length > 0) canAttach = false;
+                        if (GetOverlaps(rotObject, collisionPadding, collisionLayer).Length > 0) canAttach = false;
                         if (state == PlaceState.editShip && ShipOverlaps(_previewAirship)) canAttach = false; // Check if we are editing a ship and check if it overlaps with anything
                         if (rotations == 4) return Vector3.zero;
                     }
@@ -427,9 +469,15 @@ public class GridPlacement : MonoBehaviour
 
 
     private Vector3 GetBaseRotation(int blockId, GameObject rotObject, RaycastHit hit) {
+        //return rotObject.transform.eulerAngles;
+        Quaternion originalRotation = rotObject.transform.rotation;
         rotObject.transform.rotation = rotationReference.rotation;
-        Collider[] overlaps = GetOverlaps(rotObject, new Vector3(1, 1, 1) + new Vector3(0.002f, 0.002f, 0.002f), airshipLayer);
-        if (overlaps.Length == 0) return Vector3.zero;
+        Collider[] overlaps = GetOverlaps(rotObject, overlapPadding, airshipLayer);
+        if (overlaps.Length == 0) {
+            //rotObject.transform.rotation = originalRotation;
+            return Vector3.zero;
+        }
+
         List<int> attachedIds = new();
 
         for (int i = 0; i < overlaps.Length; i++) {
@@ -456,7 +504,7 @@ public class GridPlacement : MonoBehaviour
         int attachId = attachedIds[0] - 1;
 
 
-        for (int i = 0; i < 6; i++) {
+        for (int i = 1; i <= 6; i++) {
             if (type.CanAttach(i)) selfId = i - 1;
         }
 
@@ -467,12 +515,18 @@ public class GridPlacement : MonoBehaviour
                                 { new(-90, 0, 0), new(90, 0, 0), new(0, 0, -90), new(0, 0, 90), new(0, 0, 180)},
                                 { new(90, 0, 0), new(-90, 0, 0), new(0, 0, 90), new(0, 0, -90), new(0, 0, -180)}}; // All rotation cases with each Id combos (6 * 5)
 
+        rotObject.transform.rotation = originalRotation;
+
         return rotations[selfId, attachId] + rotationReference.eulerAngles;
     }
 
     private Transform GetBiasedSnapPoint(Vector3 hitPoint, GameObject hitObject) {
         Transform closestSnapPoint = null;
         var bestValue = Mathf.Infinity;
+
+        GameObject collisionCheckBlock = CreateBlock(currentBlockId, Vector3.zero, hitObject.transform.rotation);
+        collisionCheckBlock.layer = LayerMask.NameToLayer("Preview");
+        collisionCheckBlock.name = "collisioncheck";
 
         foreach (Transform child in hitObject.transform) {
             if (!child.CompareTag("SnapPoint")) continue;
@@ -482,12 +536,17 @@ public class GridPlacement : MonoBehaviour
             var angleFromPoint = Vector3.Angle(newNormal, Camera.main.transform.forward) % 180f / 180f * edgeBias;
             var newBestValue = distance + angleFromPoint;
 
-            if (bestValue < newBestValue || Physics.OverlapBox(child.position + GetOffset(newNormal), new Vector3(1, 1, 1) / 2f - new Vector3(0.002f, 0.002f, 0.002f), hitObject.transform.rotation, placementLayer).Length > 0) continue;
+            collisionCheckBlock.transform.position = child.position + GetOffset(collisionCheckBlock, newNormal);
+
+            if (bestValue < newBestValue || GetOverlaps(collisionCheckBlock, collisionPadding, placementLayer).Length > 0) continue;
             closestSnapPoint = child;
             bestValue = newBestValue;
             normal = newNormal;
-            rotationReference = closestSnapPoint;
+            rotationReference = closestSnapPoint.parent;
         }
+
+        blocks.Remove(collisionCheckBlock);
+        Destroy(collisionCheckBlock);
 
         return closestSnapPoint;
     }
@@ -506,7 +565,6 @@ public class GridPlacement : MonoBehaviour
             closestSnapPoint = child;
             normal = newNormal;
             bestValue = newBestValue;
-            rotationReference = closestSnapPoint;
         }
 
         return closestSnapPoint;
@@ -558,7 +616,7 @@ public class GridPlacement : MonoBehaviour
 
     private bool ShipOverlaps(GameObject checkShip) {
         foreach (Transform child in checkShip.transform) {
-            if (GetOverlaps(child.gameObject, new Vector3(1, 1, 1) - new Vector3(0.002f, 0.002f, 0.002f), collisionLayer).Length > 0) {
+            if (GetOverlaps(child.gameObject, collisionPadding, collisionLayer).Length > 0) {
                 return true;
             }
         }
@@ -600,7 +658,7 @@ public class GridPlacement : MonoBehaviour
     }
 
     private void CombineAdjacentBlocks(GameObject checkObject) {
-        Collider[] overlaps = GetOverlaps(checkObject, new Vector3(1, 1, 1) + new Vector3(0.002f, 0.002f, 0.002f), airshipLayer);
+        Collider[] overlaps = GetOverlaps(checkObject, overlapPadding, airshipLayer);
 
         for (int i = 0; i < overlaps.Length; i++) {
             Collider collider = overlaps[i];
@@ -691,15 +749,15 @@ public class GridPlacement : MonoBehaviour
         shipBody.WakeUp();
     }
     
-    private Collider[] GetOverlaps(GameObject checkObject, Vector3 extents, LayerMask layerMask)
+    private Collider[] GetOverlaps(GameObject checkObject, Vector3 padding, LayerMask layerMask)
     {
-        Collider[] overlaps = Physics.OverlapBox(checkObject.transform.position, extents / 2, checkObject.transform.rotation, layerMask);
+        BoxCollider boxCollider = blocks[checkObject].blockCollider;
+        Collider[] overlaps = Physics.OverlapBox(checkObject.transform.TransformPoint(boxCollider.center), boxCollider.size / 2 + padding, checkObject.transform.rotation, layerMask);
         List<Collider> finalOverlaps = new();
+
         for (int i = 0; i < overlaps.Length; i++) {
-            if (overlaps[i].transform != checkObject.transform)
-            {
-                finalOverlaps.Add(overlaps[i]);
-            }
+            if (overlaps[i].transform == checkObject.transform) continue;
+            finalOverlaps.Add(overlaps[i]);
         }
 
         return finalOverlaps.ToArray();

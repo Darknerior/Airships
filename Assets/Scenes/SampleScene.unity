@@ -777,6 +777,8 @@ MonoBehaviour:
     up: 1
     down: 1
   edgeBias: 0.25
+  rayPadding: 0.5
+  reach: 50
   airshipPrefab: {fileID: 8182157964636440639, guid: 9893d1c1b20f2144e8e8b03fbaecce1d, type: 3}
   previewMaterial: {fileID: 2100000, guid: 64cdadfd192f3244483842110995ba50, type: 2}
   placementLayer:
@@ -784,7 +786,7 @@ MonoBehaviour:
     m_Bits: 72
   collisionLayer:
     serializedVersion: 2
-    m_Bits: 127
+    m_Bits: 91
   airshipLayer:
     serializedVersion: 2
     m_Bits: 8
@@ -1723,7 +1725,7 @@ GameObject:
   - component: {fileID: 1341890735}
   - component: {fileID: 1341890734}
   m_Layer: 6
-  m_Name: Cube
+  m_Name: ground
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
