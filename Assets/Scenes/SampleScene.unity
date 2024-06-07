@@ -849,9 +849,9 @@ MonoBehaviour:
     back: 1
     left: 1
     right: 1
-    up: 0
+    up: 1
     down: 1
-  - weight: 1000000
+  - weight: 10000
     blockPrefab: {fileID: 7314423673160077377, guid: e75563652d93ade40a3b0484343ccb74, type: 3}
     front: 1
     back: 1
@@ -859,10 +859,10 @@ MonoBehaviour:
     right: 1
     up: 1
     down: 1
-  edgeBias: 0.25
+  edgeBias: 0.15
   rotationBias: 0.4
-  rayPadding: 0.5
-  reach: 50
+  rayPadding: 2
+  reach: 10
   airshipPrefab: {fileID: 8182157964636440639, guid: 9893d1c1b20f2144e8e8b03fbaecce1d, type: 3}
   previewMaterial: {fileID: 2100000, guid: 64cdadfd192f3244483842110995ba50, type: 2}
   placementLayer:
@@ -870,7 +870,7 @@ MonoBehaviour:
     m_Bits: 72
   collisionLayer:
     serializedVersion: 2
-    m_Bits: 91
+    m_Bits: 73
   airshipLayer:
     serializedVersion: 2
     m_Bits: 8
@@ -878,12 +878,12 @@ MonoBehaviour:
   edit: 324
   cancel: 9
   state: 0
-  rotx: 103
-  rotnegx: 116
-  rotz: 102
-  rotnegz: 104
-  roty: 118
-  rotnegy: 98
+  rotx: 0
+  rotnegx: 0
+  rotz: 0
+  rotnegz: 0
+  roty: 0
+  rotnegy: 0
 --- !u!1 &585016279
 GameObject:
   m_ObjectHideFlags: 0

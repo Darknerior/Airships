@@ -23,8 +23,6 @@ public class GridPlacement : MonoBehaviour
     public KeyCode edit;
     public KeyCode cancel;
     public PlaceState state;
-
-    // make Settings for interactable ui, switch between rotations and individual keybinds
     public KeyCode rotx;
     public KeyCode rotnegx;
     public KeyCode rotz;
@@ -46,25 +44,12 @@ public class GridPlacement : MonoBehaviour
     private GameObject _previewEditObject;
     private GameObject shipObject;
     private Vector3 editOffset;
-    private Transform previousHitBlock; // Keep track of the previous block hit by the raycast for accurate snaprotation
     private Transform rotationReference;
-    private Vector3 baseRotation;
-    private Vector3 relativeRotation;
-    private Vector3 normal;
+    private Vector3 referenceNormal;
 
     // Trackers
     private Dictionary<GameObject, Block> blocks; // Integer is the Id of the block
     private Dictionary<Transform, Rigidbody> activeBodies;
-
-    void OnDrawGizmos() {
-        Gizmos.color = Color.yellow;
-        if (_previewCube != null && _previewCube.activeSelf) {
-            BoxCollider boxCollider = blocks[_previewCube].blockCollider;
-            Matrix4x4 rotationMatrix = Matrix4x4.TRS(_previewCube.transform.TransformPoint(boxCollider.center), _previewCube.transform.rotation, _previewCube.transform.lossyScale);
-            Gizmos.matrix = rotationMatrix;
-            Gizmos.DrawCube(Vector3.zero, boxCollider.size + overlapPadding);
-        }
-    }
 
     private void Awake() {
         blocks = new();
@@ -94,9 +79,8 @@ public class GridPlacement : MonoBehaviour
                     Vector3 projectedOnRay = Vector3.Project(camToBlock, direction);
                     Vector3 lineIntersection = camPos + projectedOnRay;
                     float distanceFromRay = Vector3.Distance(lineIntersection, blockPosition);
-                    float closer = Mathf.Min(closestDistance, distanceFromRay);
-                    if (closer < closestDistance && Physics.Raycast(lineIntersection, block.transform.position - lineIntersection, out RaycastHit newHit, Mathf.Infinity, airshipLayer)) {
-                        closestDistance = closer;
+                    if (distanceFromRay < closestDistance && Physics.Raycast(lineIntersection, block.transform.position - lineIntersection, out RaycastHit newHit, Mathf.Infinity, airshipLayer)) {
+                        closestDistance = distanceFromRay;
                         closestBlock = block;
                         hit = newHit;
                     }
@@ -172,22 +156,16 @@ public class GridPlacement : MonoBehaviour
         }
     }
 
-    private void AttachBlockTo(GameObject ToAttach, GameObject AttachTo, int selfId, int AttachId) {
-
-    }
-
     private void CancelEdit() {
         editObjectRenderer.enabled = true;
         editObject.layer = _airshipLayer;
         editObject = null;
         _previewCube.SetActive(false);
-        relativeRotation = Vector3.zero;
         currentBlockId = 0;
         state = PlaceState.nothing;
     }
 
     private void CancelPlace() {
-        relativeRotation = Vector3.zero;
         _previewCube.SetActive(false);
         state = PlaceState.nothing;
     }
@@ -239,13 +217,13 @@ public class GridPlacement : MonoBehaviour
 
     private void SetPreviewCube(RaycastHit hit) {
         // Adjust position to either ground hit or snap point
+        referenceNormal = hit.normal;
         rotationReference = hit.collider.transform;
         var placementPosition = CalculatePlacementPosition(hit, _previewCube);
         _previewCube.transform.position = placementPosition;
-        _previewCube.transform.up = (_previewCube.transform.position - rotationReference.position).normalized;
+        _previewCube.transform.rotation = rotationReference.rotation;
         
-        baseRotation = GetBaseRotation(currentBlockId, _previewCube, hit);
-        _previewCube.transform.rotation = Quaternion.Euler(baseRotation /*+ relativeRotation*/);
+        _previewCube.transform.rotation = GetBaseRotation(_previewCube, hit);
     }
 
     void CreatePreviewBlock(int blockId) {
@@ -260,54 +238,39 @@ public class GridPlacement : MonoBehaviour
     }
 
     private Vector3 CalculatePlacementPosition(RaycastHit hit, GameObject placementCube) {
-        normal = hit.normal;
         var placementPosition = Vector3.zero;
 
-        Transform closestSnapPoint = null;
-
         if (hit.collider.gameObject.layer == _airshipLayer) {
-            closestSnapPoint = GetBiasedSnapPoint(hit.point, hit.collider.gameObject);
-            if (closestSnapPoint != null)
-            {
-                // If a snap point is found, set pos
-                placementPosition = closestSnapPoint.position;
-            }
+            placementPosition = GetBiasedSnapPoint(hit, edgeBias);
         }
-        else placementPosition = hit.point; //Set the location to the point at the ground we are looking at
-        placementPosition += GetOffset(_previewCube, normal);
+        else placementPosition = hit.point + GetOffset(_previewCube, hit.normal); //Set the location to the point at the ground we are looking at
 
-        GameObject collisionCheckBlock = CreateBlock(currentBlockId, placementPosition, Quaternion.identity);
+        GameObject collisionCheckBlock = CreateBlock(currentBlockId, placementPosition, rotationReference.rotation);
         collisionCheckBlock.layer = LayerMask.NameToLayer("Preview");
         collisionCheckBlock.name = "collisioncheck";
 
-        if (GetOverlaps(collisionCheckBlock, collisionPadding, collisionLayer).Length > 0) { // If you try to place inside another block
-            Collider[] surroundingCubes = GetOverlaps(placementCube, new Vector3(1, 1, 1), airshipLayer);
-            float closestDistance = float.MaxValue;
+        if (GetOverlaps(collisionCheckBlock, collisionPadding, collisionLayer).Length > 0) {
+            Collider[] surroundingBlocks = Physics.OverlapBox(placementPosition, Vector3.one, rotationReference.rotation, airshipLayer);
+            Vector3 newPlacementPosition = Vector3.zero;
+            float bestValue = float.MaxValue;
 
-            for (int i = 0; i < surroundingCubes.Length; i++) {
-                Collider collider = surroundingCubes[i];
-                var newClosestSnapPoint = GetSnapPoint(hit.point, collider.gameObject);
-                float distance = Vector3.Distance(newClosestSnapPoint.position, hit.point) + Vector3.Distance(newClosestSnapPoint.position, Camera.main.transform.position) * 0.5f;
-                if (distance < closestDistance) {
-                    Vector3 tempNormal = (newClosestSnapPoint.position - newClosestSnapPoint.parent.position).normalized;
-                    Vector3 tempPlacementPosition = newClosestSnapPoint.position + GetOffset(collisionCheckBlock, tempNormal); 
-                    collisionCheckBlock.transform.rotation = newClosestSnapPoint.parent.rotation;
-                    collisionCheckBlock.transform.position = tempPlacementPosition;
+            foreach (Collider block in surroundingBlocks) {
+                for (int i = 1; i <= 6; i++) {
+                    Vector3 localposition = GetOffset(block.gameObject, block.transform.InverseTransformDirection(LocalFaceIdToVector(i, block.transform))) * 2f;
+                    float angleFromPoint = Vector3.Angle(block.transform.TransformDirection(localposition), Camera.main.transform.forward) % 180f / 180f * edgeBias;
+                    Vector3 position = block.transform.TransformPoint(localposition);
+                    float newValue = Vector3.Distance(placementPosition, position) + angleFromPoint;
 
-                    if (GetOverlaps(collisionCheckBlock, collisionPadding, collisionLayer).Length > 0) continue;
+                    collisionCheckBlock.transform.position = position;
+                    collisionCheckBlock.transform.rotation = block.transform.rotation;
 
-                    normal = tempNormal;
-                    closestDistance = distance;
-                    closestSnapPoint = newClosestSnapPoint;
-                    placementPosition = tempPlacementPosition;
-                    rotationReference = newClosestSnapPoint.parent;
+                    if (newValue > bestValue || GetOverlaps(collisionCheckBlock, collisionPadding, collisionLayer).Length > 0) continue;
+
+                    bestValue = newValue;
+                    newPlacementPosition = position;
                 }
             }
-        }
-
-        if (previousHitBlock != closestSnapPoint) {
-            previousHitBlock = closestSnapPoint;
-            relativeRotation = Vector3.zero; // Reset relative rotation when another snappoint is chosen
+            placementPosition = newPlacementPosition;
         }
 
         blocks.Remove(collisionCheckBlock);
@@ -316,7 +279,7 @@ public class GridPlacement : MonoBehaviour
         return placementPosition;
     }
 
-    private Vector3 GetOffset(GameObject offsetObject, Vector3 hitNormal) {
+    private Vector3 GetOffset(GameObject offsetObject, Vector3 localNormal) {
         var collider = blocks[offsetObject].blockCollider;
         var center = collider.center * 2f; // If a collider is offset we adjust the offset accordingly (*2f because the added height is the offset *2)
 
@@ -324,59 +287,12 @@ public class GridPlacement : MonoBehaviour
 
         // Adjust the placement position by half the placed objects size in the hits normal direction 
         var sideOffset = new Vector3(
-            hitNormal.x * extents.x,
-            hitNormal.y * extents.y,
-            hitNormal.z * extents.z
+            localNormal.x * extents.x,
+            localNormal.y * extents.y,
+            localNormal.z * extents.z
         );
 
         return sideOffset;
-    }
-
-    private Vector3 GetRotation(int blockId, GameObject rotObject, RaycastHit hit)
-    {
-        float minAngle = float.MaxValue;
-        Vector3 rotationVector = Vector3.zero;
-        
-        for (int i = 1; i <= 6; i++) // Get the direction to rotate in based on the look direction
-        {
-            float angle = Mathf.Min(minAngle, Vector3.Angle(Camera.main.transform.forward, FaceIdToVector(i)));
-            if (minAngle > angle) {
-                minAngle = angle;
-                rotationVector = FaceIdToVector(i);
-            }
-        }
-
-        KeyCode[] keys = new KeyCode[6] {rotnegz, rotz, rotx, rotnegx, roty, rotnegy};
-        Vector3[] rotationVectors = new Vector3[6] { rotationVector, -rotationVector, Vector3.Cross(rotationVector, new Vector3(0, 1, 0)), -Vector3.Cross(rotationVector, new(0, 1, 0)), Vector3.Cross(rotationVector, new(1, 0, 0)), -Vector3.Cross(rotationVector, new(1, 0, 0)) };
-
-        if (rotationVector != Vector3.zero) { // Should always return true
-            for (int i = 0; i < 6; i++) {
-                if (Input.GetKeyDown(keys[i])) {
-                    Vector3 rotationStep = Quaternion.AngleAxis(45, rotationVectors[i]).eulerAngles;
-                    Vector3 finalRotation = Vector3.zero;
-                    Quaternion originalRotation = rotObject.transform.rotation;
-                    BlockType blockType = blockTypes[blockId];
-                    bool canAttach = false;
-                    int rotations = 0;
-
-                    while (!canAttach) { // If the block cant attach we keep rotating till it can
-                        rotations++;
-                        rotObject.transform.Rotate(rotationStep, Space.World);
-                        finalRotation += rotationStep;
-                        int snapFaces = CalculateLocalFaceId(normal, hit.collider.transform); // Get local faceId for accurate attachment check
-                        canAttach = blockType.CanAttach(snapFaces);
-                        if (GetOverlaps(rotObject, collisionPadding, collisionLayer).Length > 0) canAttach = false;
-                        if (rotations == 8) return Vector3.zero;
-                    }
-
-                    rotObject.transform.rotation = originalRotation;
-                    return finalRotation;
-                }
-            }
-        }
-
-        return Vector3.zero;
-
     }
 
     private Vector4 GetClosestEdgeData(RaycastHit hit) {
@@ -408,137 +324,54 @@ public class GridPlacement : MonoBehaviour
         return new Vector4(inverseEdgeDistance.x, inverseEdgeDistance.y, inverseEdgeDistance.z, maxValue);
     }
 
-    private Vector3 GetBaseRotation(int blockId, GameObject rotObject, RaycastHit hit) {
+    private Quaternion GetBaseRotation(GameObject rotObject, RaycastHit hit) {
+        Vector4 edgeData = GetClosestEdgeData(hit);
+        if (edgeData == Vector4.zero) return Quaternion.identity;
+
+        Vector3 inverseEdgeDistance = hit.collider.transform.TransformDirection(edgeData).normalized;
+        float maxValue = edgeData.w;
+
+        if (0.5f - maxValue > rotationBias || referenceNormal != hit.normal) {
+            inverseEdgeDistance = -referenceNormal;
+        }
+        
+        Quaternion rotation = SafeFromToRotation(-rotObject.transform.up, inverseEdgeDistance);
+        Debug.DrawRay(rotObject.transform.position, -rotObject.transform.up * 2, Color.cyan);
+        Debug.DrawRay(rotObject.transform.position, inverseEdgeDistance * 2, Color.red);
+        Debug.Log("angle: " + Vector3.Angle(-rotObject.transform.up, inverseEdgeDistance) + " solution: " + rotation.eulerAngles.magnitude);
+
+        return rotation * rotObject.transform.rotation;
+    }
+
+    public Quaternion SafeFromToRotation(Vector3 fromVector, Vector3 toVector)
+    {
+        if (Vector3.Dot(fromVector, toVector) < -0.99999f)
+        {
+            Vector3 axis = Vector3.Cross(rotationReference.up, fromVector).normalized;
+            if (Mathf.Approximately(axis.magnitude, 0)) axis = Vector3.Cross(rotationReference.right, fromVector).normalized;
+            return Quaternion.AngleAxis(180f, axis);
+        }
+        else
+        {
+            return Quaternion.FromToRotation(fromVector, toVector);
+        }
+    }
+
+
+    private Vector3 GetBiasedSnapPoint(RaycastHit hit, float bias) {
         Vector4 edgeData = GetClosestEdgeData(hit);
         if (edgeData == Vector4.zero) return Vector3.zero;
 
         Vector3 inverseEdgeDistance = edgeData;
         float maxValue = edgeData.w;
 
-        inverseEdgeDistance = hit.collider.transform.TransformDirection(inverseEdgeDistance);
-
-        if (0.5f - maxValue > rotationBias) {
-            inverseEdgeDistance = hit.collider.transform.TransformDirection(normal);
+        if (0.5f - maxValue > bias) {
+            inverseEdgeDistance = hit.collider.transform.InverseTransformDirection(hit.normal);
         }
 
-        float angle = Vector3.Angle(inverseEdgeDistance.normalized, rotObject.transform.up);
-        Vector3 rotationAxis = Vector3.Cross(inverseEdgeDistance.normalized, rotObject.transform.up);
-        Quaternion rotation = Quaternion.AngleAxis(angle, rotationAxis) * rotObject.transform.rotation;
+        referenceNormal = hit.collider.transform.TransformDirection(inverseEdgeDistance.normalized);
 
-        return rotation.eulerAngles;
-    }
-
-    private Vector3 GetBestRotation(int blockId, GameObject rotObject) {
-        GameObject collisionCheckBlock = CreateBlock(0, rotObject.transform.position, rotationReference.rotation);
-        collisionCheckBlock.layer = LayerMask.NameToLayer("Preview");
-        collisionCheckBlock.name = "collisioncheck";
-        Collider[] overlaps = GetOverlaps(collisionCheckBlock, overlapPadding, airshipLayer);
-        blocks.Remove(collisionCheckBlock);
-        Destroy(collisionCheckBlock);
-
-        if (overlaps.Length == 0) {
-            return rotationReference.eulerAngles;
-        }
-
-        List<Transform> alignedObjects = new();
-        List<int> selfFaceIds = new(); // list of ids of the rotobject where a block is aligned
-        List<int> alignedObjectFaceIds = new(); // list of said aligned objects and the ids which they are surrounding the rotobject
-
-        for (int i = 0; i < overlaps.Length; i++) {
-            Collider collider = overlaps[i];
-            Transform colTransform = collider.transform;
-            Vector3 toObject = colTransform.position - rotObject.transform.position;
-            int selfFaceId = CalculateLocalFaceId(toObject, rotObject.transform);
-            int hitId = CalculateLocalFaceId(-toObject, colTransform);
-
-            if (IsAligned(rotObject.transform, toObject, selfFaceId)) // Check if the object is directly next to it
-            {
-                alignedObjects.Add(colTransform);
-                selfFaceIds.Add(selfFaceId);
-                alignedObjectFaceIds.Add(hitId);
-            }
-        }
-
-        if (alignedObjects.Count == 0) {
-            return rotationReference.eulerAngles;
-        }
-
-        BlockType rotObjectType = blockTypes[blockId];
-
-        for (int i = 0; i < alignedObjects.Count; i++) {
-            BlockType alignedObjectType = blockTypes[blocks[alignedObjects[i].gameObject].blockId];
-            if (rotObjectType.CanAttach(selfFaceIds[i]) && alignedObjectType.CanAttach(alignedObjectFaceIds[i])) {
-                return rotationReference.eulerAngles;
-            }
-        }
-
-        Vector3 selfAttachVector = Vector3.zero;
-        Vector3 attachVector = LocalFaceIdToVector(alignedObjectFaceIds[0], alignedObjects[0]);
-    	
-        // front back left right up down
-        int[] priorityAttachIds = new int[6] { 5, 6, 1, 2, 3, 4 };
-        for (int i = 1; i <= 6; i++) {
-            int id = priorityAttachIds[i - 1];
-            if (rotObjectType.CanAttach(id)) {
-                selfAttachVector = LocalFaceIdToVector(id, rotObject.transform);
-                break;
-            }
-        }
-
-        Vector3 rotationAxis = Vector3.Cross(selfAttachVector, attachVector);
-        float rotationAngle = Vector3.Angle(selfAttachVector, attachVector);
-        Quaternion rotation = Quaternion.AngleAxis(rotationAngle, rotationAxis) * rotationReference.rotation;
-        return rotation.eulerAngles;
-    }
-
-    private Transform GetBiasedSnapPoint(Vector3 hitPoint, GameObject hitObject) {
-        Transform closestSnapPoint = null;
-        var bestValue = Mathf.Infinity;
-
-        GameObject collisionCheckBlock = CreateBlock(currentBlockId, Vector3.zero, hitObject.transform.rotation);
-        collisionCheckBlock.layer = LayerMask.NameToLayer("Preview");
-        collisionCheckBlock.name = "collisioncheck";
-
-        foreach (Transform child in hitObject.transform) {
-            if (!child.CompareTag("SnapPoint")) continue;
-            var distance = Vector3.Distance(hitPoint, child.position);
-            var newNormal = (child.position - hitObject.transform.position).normalized;
-            // Get the angle from the normal of the snappoint and the camera. do % 180 to disregard - angles. normalize it and divide it by a number to set theweight of the angle
-            var angleFromPoint = Vector3.Angle(newNormal, Camera.main.transform.forward) % 180f / 180f * edgeBias;
-            var newBestValue = distance + angleFromPoint;
-
-            collisionCheckBlock.transform.position = child.position + GetOffset(collisionCheckBlock, newNormal);
-
-            if (bestValue < newBestValue || GetOverlaps(collisionCheckBlock, collisionPadding, placementLayer).Length > 0) continue;
-            closestSnapPoint = child;
-            bestValue = newBestValue;
-            normal = newNormal;
-            rotationReference = closestSnapPoint.parent;
-        }
-
-        blocks.Remove(collisionCheckBlock);
-        Destroy(collisionCheckBlock);
-
-        return closestSnapPoint;
-    }
-
-    private Transform GetSnapPoint(Vector3 hitPoint, GameObject hitObject) {
-        Transform closestSnapPoint = null;
-        var bestValue = Mathf.Infinity;
-
-        foreach (Transform child in hitObject.transform) {
-            if (!child.CompareTag("SnapPoint")) continue;
-            var distance = Vector3.Distance(hitPoint, child.position);
-            var newNormal = (child.position - hitObject.transform.position).normalized;
-            var newBestValue = distance;
-
-            if (bestValue < newBestValue) continue;
-            closestSnapPoint = child;
-            normal = newNormal;
-            bestValue = newBestValue;
-        }
-
-        return closestSnapPoint;
+        return rotationReference.TransformPoint(GetOffset(rotationReference.gameObject, inverseEdgeDistance.normalized) * 2f);
     }
 
     private void SetPreviewOpacity(GameObject obj, Material previewMat) {
@@ -595,22 +428,6 @@ public class GridPlacement : MonoBehaviour
         return false;
     }
 
-    private int CalculateFaceId(Vector3 normal) {
-        int Id = 0;
-        float minAngle = float.MaxValue;
-
-        for (int i = 1; i <= 6; i++) {
-            float angle = Mathf.Min(minAngle, Vector3.Angle(FaceIdToVector(i), normal));
-
-            if (minAngle > angle) {
-                minAngle = angle;
-                Id = i;
-            }
-        }
-
-        return Id; // If its nothing return 0, 0 (not possible)
-    }
-
     private int CalculateLocalFaceId(Vector3 normal, Transform refObject) {
         int id = 0;
         float minAngle = float.MaxValue;
@@ -636,7 +453,7 @@ public class GridPlacement : MonoBehaviour
             Vector3 objectDirection = colTransform.position - checkObject.transform.position;
             int selfFaceId = CalculateLocalFaceId(objectDirection, checkObject.transform); // Check which face the object is near
 
-            if (IsAligned(checkObject.transform, objectDirection, selfFaceId)) // Check if the object is directly on it
+            if (IsAligned(checkObject.transform, colTransform, selfFaceId)) // Check if the object is directly on it
             {
                 SetFace(checkObject, selfFaceId, colTransform.gameObject); // Attach the object to itself
                 int attachFaceId = CalculateLocalFaceId(-objectDirection, colTransform);
@@ -653,40 +470,31 @@ public class GridPlacement : MonoBehaviour
         }
     }
 
-    private bool IsAligned(Transform checkObject, Vector3 objectDirection, int faceId) {
+    private bool IsAligned(Transform baseObject, Transform alignedObject, int faceId) {
         Vector3 angleVector = Vector3.zero;
         switch (faceId)
         {
-            case 1: angleVector = checkObject.forward; break;
-            case 2: angleVector = -checkObject.forward; break;
-            case 3: angleVector = -checkObject.right; break;
-            case 4: angleVector = checkObject.right; break;
-            case 5: angleVector = checkObject.up; break;
-            case 6: angleVector = -checkObject.up; break;
+            case 1: angleVector = baseObject.forward; break;
+            case 2: angleVector = -baseObject.forward; break;
+            case 3: angleVector = -baseObject.right; break;
+            case 4: angleVector = baseObject.right; break;
+            case 5: angleVector = baseObject.up; break;
+            case 6: angleVector = -baseObject.up; break;
         }
 
-        return Vector3.Angle(angleVector, objectDirection) < 1f;
+        Vector3 checkPoint = baseObject.TransformPoint(blocks[baseObject.gameObject].blockCollider.center);
+        Debug.DrawRay(checkPoint, angleVector * 2, Color.yellow, 3);
+        if (Physics.Raycast(checkPoint, angleVector, out RaycastHit hit, Mathf.Infinity, airshipLayer) && hit.collider.transform == alignedObject && Vector3.Angle(angleVector, alignedObject.position - baseObject.position) < 1f) {
+            return true;
+        }
+
+        return false;
     }
 
     private void ReParentBlocks(Transform newParent, List<GameObject> reparentBlocks) {
         for (int i = 0; i < reparentBlocks.Count; i++) {
             reparentBlocks[i].transform.SetParent(newParent);
         }
-    }
-
-    private void RecalculateWeights(Transform ship) {
-        Rigidbody shipBody = activeBodies[ship];
-        float totalMass = 0;
-        Vector3 weightedMass = Vector3.zero;
-        foreach (Transform child in ship) {
-            float weight = blockTypes[blocks[child.gameObject].blockId].weight;
-            totalMass += weight;
-            weightedMass += child.localPosition * weight;
-        }
-
-        shipBody.mass = totalMass;
-        shipBody.centerOfMass = weightedMass / totalMass;
-        shipBody.WakeUp();
     }
 
     private void RemoveWeights(Transform ship, List<GameObject> removeBlocks) {
