@@ -5,6 +5,13 @@ TagManager:
   serializedVersion: 2
   tags:
   - SnapPoint
+  - Moveable
+  - Clockwise
+  - CounterClockwise
+  - Left
+  - Right
+  - Up
+  - Down
   layers:
   - Default
   - TransparentFX
@@ -14,7 +21,7 @@ TagManager:
   - UI
   - Ground
   - Preview
-  - 
+  - Rotation
   - 
   - 
   - 
