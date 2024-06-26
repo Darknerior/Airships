@@ -859,10 +859,27 @@ MonoBehaviour:
     right: 1
     up: 1
     down: 1
+<<<<<<< Updated upstream
   edgeBias: 0.25
   rotationBias: 0.4
   rayPadding: 0.5
   reach: 50
+=======
+  - weight: 60
+    blockPrefab: {fileID: 7314423673160077377, guid: e75563652d93ade40a3b0484343ccb74, type: 3}
+    front: 1
+    back: 1
+    left: 1
+    right: 1
+    up: 0
+    down: 1
+  edgeBias: 0.15
+  edgeAngleFactor: 0.35
+  rotationBias: 0.4
+  rotationAngleFactor: 0
+  rayPadding: 2
+  reach: 10
+>>>>>>> Stashed changes
   airshipPrefab: {fileID: 8182157964636440639, guid: 9893d1c1b20f2144e8e8b03fbaecce1d, type: 3}
   previewMaterial: {fileID: 2100000, guid: 64cdadfd192f3244483842110995ba50, type: 2}
   placementLayer:

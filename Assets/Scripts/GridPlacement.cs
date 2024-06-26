@@ -3,8 +3,8 @@ using System.Collections.Generic;
 public class GridPlacement : MonoBehaviour
 {
     public BlockType[] blockTypes;
-    [Range(0, 1)] public float edgeBias = 0;
-    [Range(0, 1)] public float rotationBias = 0;
+    [Range(0, 1)] public float edgeBias = 0, edgeAngleFactor = 0;
+    [Range(0, 1)] public float rotationBias = 0, rotationAngleFactor = 0;
     public float rayPadding = 0;
     public float reach = 10;
     public GameObject airshipPrefab;
@@ -78,9 +78,8 @@ public class GridPlacement : MonoBehaviour
         float paddingRadius = rayPadding * 0.5f;
 
         Collider closestBlock = null;
-        RaycastHit hit = new();
 
-        if (!Physics.Raycast(camPos, direction, out hit, Mathf.Infinity, airshipLayer))
+        if (!Physics.Raycast(camPos, direction, out RaycastHit hit, Mathf.Infinity, airshipLayer))
         {
             Collider[] overlaps = Physics.OverlapCapsule(camPos + direction * paddingRadius, camPos + direction * (reach - paddingRadius), paddingRadius, airshipLayer);
             if (overlaps.Length > 0)
@@ -408,17 +407,64 @@ public class GridPlacement : MonoBehaviour
         return new Vector4(inverseEdgeDistance.x, inverseEdgeDistance.y, inverseEdgeDistance.z, maxValue);
     }
 
+<<<<<<< Updated upstream
     private Vector3 GetBaseRotation(int blockId, GameObject rotObject, RaycastHit hit) {
+=======
+    private Quaternion GetBaseRotation(GameObject rotObject, RaycastHit hit) {
+        Vector4 edgeData = GetClosestEdgeData(hit);
+        if (edgeData == Vector4.zero) return Quaternion.identity;
+
+        Vector3 inverseEdgeDistance = hit.collider.transform.TransformDirection(edgeData).normalized;
+        float maxValue = edgeData.w;
+
+        float CloseToAngleFactor = Vector3.Angle(inverseEdgeDistance.normalized, Camera.main.transform.forward) % 180f / 180f;
+
+        if (0.5f - maxValue > rotationBias || referenceNormal != hit.normal || CloseToAngleFactor > rotationAngleFactor) {
+            inverseEdgeDistance = -referenceNormal;
+        }
+        
+        Quaternion rotation = SafeFromToRotation(-rotObject.transform.up, inverseEdgeDistance);
+        Debug.DrawRay(rotObject.transform.position, -rotObject.transform.up * 2, Color.cyan);
+        Debug.DrawRay(rotObject.transform.position, inverseEdgeDistance * 2, Color.red);
+        Debug.Log("angle: " + Vector3.Angle(-rotObject.transform.up, inverseEdgeDistance) + " solution: " + rotation.eulerAngles.magnitude);
+
+        return rotation * rotObject.transform.rotation;
+    }
+
+    public Quaternion SafeFromToRotation(Vector3 fromVector, Vector3 toVector)
+    {
+        if (Vector3.Dot(fromVector, toVector) < -0.99999f)
+        {
+            Vector3 axis = Vector3.Cross(rotationReference.up, fromVector).normalized;
+            if (Mathf.Approximately(axis.magnitude, 0)) axis = Vector3.Cross(rotationReference.right, fromVector).normalized;
+            return Quaternion.AngleAxis(180f, axis);
+        }
+        else
+        {
+            return Quaternion.FromToRotation(fromVector, toVector);
+        }
+    }
+
+
+    private Vector3 GetBiasedSnapPoint(RaycastHit hit, float bias) {
+>>>>>>> Stashed changes
         Vector4 edgeData = GetClosestEdgeData(hit);
         if (edgeData == Vector4.zero) return Vector3.zero;
 
         Vector3 inverseEdgeDistance = edgeData;
         float maxValue = edgeData.w;
 
+<<<<<<< Updated upstream
         inverseEdgeDistance = hit.collider.transform.TransformDirection(inverseEdgeDistance);
 
         if (0.5f - maxValue > rotationBias) {
             inverseEdgeDistance = hit.collider.transform.TransformDirection(normal);
+=======
+        float CloseToAngleFactor = Vector3.Angle(inverseEdgeDistance.normalized, Camera.main.transform.forward) % 180f / 180f;
+
+        if (0.5f - maxValue > bias || CloseToAngleFactor > edgeAngleFactor) {
+            inverseEdgeDistance = hit.collider.transform.InverseTransformDirection(hit.normal);
+>>>>>>> Stashed changes
         }
 
         float angle = Vector3.Angle(inverseEdgeDistance.normalized, rotObject.transform.up);
