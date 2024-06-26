@@ -407,9 +407,6 @@ public class GridPlacement : MonoBehaviour
         return new Vector4(inverseEdgeDistance.x, inverseEdgeDistance.y, inverseEdgeDistance.z, maxValue);
     }
 
-<<<<<<< Updated upstream
-    private Vector3 GetBaseRotation(int blockId, GameObject rotObject, RaycastHit hit) {
-=======
     private Quaternion GetBaseRotation(GameObject rotObject, RaycastHit hit) {
         Vector4 edgeData = GetClosestEdgeData(hit);
         if (edgeData == Vector4.zero) return Quaternion.identity;
@@ -447,24 +444,16 @@ public class GridPlacement : MonoBehaviour
 
 
     private Vector3 GetBiasedSnapPoint(RaycastHit hit, float bias) {
->>>>>>> Stashed changes
         Vector4 edgeData = GetClosestEdgeData(hit);
         if (edgeData == Vector4.zero) return Vector3.zero;
 
         Vector3 inverseEdgeDistance = edgeData;
         float maxValue = edgeData.w;
 
-<<<<<<< Updated upstream
-        inverseEdgeDistance = hit.collider.transform.TransformDirection(inverseEdgeDistance);
-
-        if (0.5f - maxValue > rotationBias) {
-            inverseEdgeDistance = hit.collider.transform.TransformDirection(normal);
-=======
         float CloseToAngleFactor = Vector3.Angle(inverseEdgeDistance.normalized, Camera.main.transform.forward) % 180f / 180f;
 
         if (0.5f - maxValue > bias || CloseToAngleFactor > edgeAngleFactor) {
             inverseEdgeDistance = hit.collider.transform.InverseTransformDirection(hit.normal);
->>>>>>> Stashed changes
         }
 
         float angle = Vector3.Angle(inverseEdgeDistance.normalized, rotObject.transform.up);
