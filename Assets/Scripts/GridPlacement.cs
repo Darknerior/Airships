@@ -243,8 +243,7 @@ public class GridPlacement : MonoBehaviour
         _previewCube.transform.position = placementPosition;
         _previewCube.transform.up = (_previewCube.transform.position - rotationReference.position).normalized;
         
-        baseRotation = GetBaseRotation(currentBlockId, _previewCube, hit);
-        _previewCube.transform.rotation = Quaternion.Euler(baseRotation /*+ relativeRotation*/);
+        _previewCube.transform.rotation = GetBaseRotation(_previewCube, hit);
     }
 
     void CreatePreviewBlock(int blockId) {
@@ -262,24 +261,14 @@ public class GridPlacement : MonoBehaviour
         normal = hit.normal;
         var placementPosition = Vector3.zero;
 
-        Transform closestSnapPoint = null;
+        if (hit.collider.gameObject.layer == _airshipLayer) placementPosition = GetBiasedSnapPoint(hit, edgeBias);
+        else placementPosition = hit.point + GetOffset(_previewCube, normal);
 
-        if (hit.collider.gameObject.layer == _airshipLayer) {
-            closestSnapPoint = GetBiasedSnapPoint(hit.point, hit.collider.gameObject);
-            if (closestSnapPoint != null)
-            {
-                // If a snap point is found, set pos
-                placementPosition = closestSnapPoint.position;
-            }
-        }
-        else placementPosition = hit.point; //Set the location to the point at the ground we are looking at
-        placementPosition += GetOffset(_previewCube, normal);
-
-        GameObject collisionCheckBlock = CreateBlock(currentBlockId, placementPosition, Quaternion.identity);
+        GameObject collisionCheckBlock = CreateBlock(currentBlockId, placementPosition, placementCube.transform.rotation);
         collisionCheckBlock.layer = LayerMask.NameToLayer("Preview");
         collisionCheckBlock.name = "collisioncheck";
 
-        if (GetOverlaps(collisionCheckBlock, collisionPadding, collisionLayer).Length > 0) { // If you try to place inside another block
+        /*if (GetOverlaps(collisionCheckBlock, collisionPadding, collisionLayer).Length > 0) { // If you try to place inside another block
             Collider[] surroundingCubes = GetOverlaps(placementCube, new Vector3(1, 1, 1), airshipLayer);
             float closestDistance = float.MaxValue;
 
@@ -297,17 +286,11 @@ public class GridPlacement : MonoBehaviour
 
                     normal = tempNormal;
                     closestDistance = distance;
-                    closestSnapPoint = newClosestSnapPoint;
                     placementPosition = tempPlacementPosition;
                     rotationReference = newClosestSnapPoint.parent;
                 }
             }
-        }
-
-        if (previousHitBlock != closestSnapPoint) {
-            previousHitBlock = closestSnapPoint;
-            relativeRotation = Vector3.zero; // Reset relative rotation when another snappoint is chosen
-        }
+        } */
 
         blocks.Remove(collisionCheckBlock);
         Destroy(collisionCheckBlock);
@@ -416,8 +399,8 @@ public class GridPlacement : MonoBehaviour
 
         float CloseToAngleFactor = Vector3.Angle(inverseEdgeDistance.normalized, Camera.main.transform.forward) % 180f / 180f;
 
-        if (0.5f - maxValue > rotationBias || referenceNormal != hit.normal || CloseToAngleFactor > rotationAngleFactor) {
-            inverseEdgeDistance = -referenceNormal;
+        if (0.5f - maxValue > rotationBias || normal != hit.normal || CloseToAngleFactor > rotationAngleFactor) {
+            inverseEdgeDistance = -normal;
         }
         
         Quaternion rotation = SafeFromToRotation(-rotObject.transform.up, inverseEdgeDistance);
@@ -456,11 +439,7 @@ public class GridPlacement : MonoBehaviour
             inverseEdgeDistance = hit.collider.transform.InverseTransformDirection(hit.normal);
         }
 
-        float angle = Vector3.Angle(inverseEdgeDistance.normalized, rotObject.transform.up);
-        Vector3 rotationAxis = Vector3.Cross(inverseEdgeDistance.normalized, rotObject.transform.up);
-        Quaternion rotation = Quaternion.AngleAxis(angle, rotationAxis) * rotObject.transform.rotation;
-
-        return rotation.eulerAngles;
+        return hit.collider.transform.TransformPoint(inverseEdgeDistance);
     }
 
     private Vector3 GetBestRotation(int blockId, GameObject rotObject) {
