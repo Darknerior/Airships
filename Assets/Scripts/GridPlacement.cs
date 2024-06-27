@@ -399,7 +399,7 @@ public class GridPlacement : MonoBehaviour
 
         float CloseToAngleFactor = Vector3.Angle(inverseEdgeDistance.normalized, Camera.main.transform.forward) % 180f / 180f;
 
-        if (0.5f - maxValue > rotationBias || normal != hit.normal || CloseToAngleFactor > rotationAngleFactor) {
+        if (0.5f - maxValue > rotationBias || normal != hit.normal || CloseToAngleFactor > 1f - rotationAngleFactor) {
             inverseEdgeDistance = -normal;
         }
         
@@ -435,124 +435,13 @@ public class GridPlacement : MonoBehaviour
 
         float CloseToAngleFactor = Vector3.Angle(inverseEdgeDistance.normalized, Camera.main.transform.forward) % 180f / 180f;
 
-        if (0.5f - maxValue > bias || CloseToAngleFactor > edgeAngleFactor) {
+        if (0.5f - maxValue > bias || CloseToAngleFactor < edgeAngleFactor) {
             inverseEdgeDistance = hit.collider.transform.InverseTransformDirection(hit.normal);
         }
 
-        return hit.collider.transform.TransformPoint(inverseEdgeDistance);
-    }
-
-    private Vector3 GetBestRotation(int blockId, GameObject rotObject) {
-        GameObject collisionCheckBlock = CreateBlock(0, rotObject.transform.position, rotationReference.rotation);
-        collisionCheckBlock.layer = LayerMask.NameToLayer("Preview");
-        collisionCheckBlock.name = "collisioncheck";
-        Collider[] overlaps = GetOverlaps(collisionCheckBlock, overlapPadding, airshipLayer);
-        blocks.Remove(collisionCheckBlock);
-        Destroy(collisionCheckBlock);
-
-        if (overlaps.Length == 0) {
-            return rotationReference.eulerAngles;
-        }
-
-        List<Transform> alignedObjects = new();
-        List<int> selfFaceIds = new(); // list of ids of the rotobject where a block is aligned
-        List<int> alignedObjectFaceIds = new(); // list of said aligned objects and the ids which they are surrounding the rotobject
-
-        for (int i = 0; i < overlaps.Length; i++) {
-            Collider collider = overlaps[i];
-            Transform colTransform = collider.transform;
-            Vector3 toObject = colTransform.position - rotObject.transform.position;
-            int selfFaceId = CalculateLocalFaceId(toObject, rotObject.transform);
-            int hitId = CalculateLocalFaceId(-toObject, colTransform);
-
-            if (IsAligned(rotObject.transform, toObject, selfFaceId)) // Check if the object is directly next to it
-            {
-                alignedObjects.Add(colTransform);
-                selfFaceIds.Add(selfFaceId);
-                alignedObjectFaceIds.Add(hitId);
-            }
-        }
-
-        if (alignedObjects.Count == 0) {
-            return rotationReference.eulerAngles;
-        }
-
-        BlockType rotObjectType = blockTypes[blockId];
-
-        for (int i = 0; i < alignedObjects.Count; i++) {
-            BlockType alignedObjectType = blockTypes[blocks[alignedObjects[i].gameObject].blockId];
-            if (rotObjectType.CanAttach(selfFaceIds[i]) && alignedObjectType.CanAttach(alignedObjectFaceIds[i])) {
-                return rotationReference.eulerAngles;
-            }
-        }
-
-        Vector3 selfAttachVector = Vector3.zero;
-        Vector3 attachVector = LocalFaceIdToVector(alignedObjectFaceIds[0], alignedObjects[0]);
-    	
-        // front back left right up down
-        int[] priorityAttachIds = new int[6] { 5, 6, 1, 2, 3, 4 };
-        for (int i = 1; i <= 6; i++) {
-            int id = priorityAttachIds[i - 1];
-            if (rotObjectType.CanAttach(id)) {
-                selfAttachVector = LocalFaceIdToVector(id, rotObject.transform);
-                break;
-            }
-        }
-
-        Vector3 rotationAxis = Vector3.Cross(selfAttachVector, attachVector);
-        float rotationAngle = Vector3.Angle(selfAttachVector, attachVector);
-        Quaternion rotation = Quaternion.AngleAxis(rotationAngle, rotationAxis) * rotationReference.rotation;
-        return rotation.eulerAngles;
-    }
-
-    private Transform GetBiasedSnapPoint(Vector3 hitPoint, GameObject hitObject) {
-        Transform closestSnapPoint = null;
-        var bestValue = Mathf.Infinity;
-
-        GameObject collisionCheckBlock = CreateBlock(currentBlockId, Vector3.zero, hitObject.transform.rotation);
-        collisionCheckBlock.layer = LayerMask.NameToLayer("Preview");
-        collisionCheckBlock.name = "collisioncheck";
-
-        foreach (Transform child in hitObject.transform) {
-            if (!child.CompareTag("SnapPoint")) continue;
-            var distance = Vector3.Distance(hitPoint, child.position);
-            var newNormal = (child.position - hitObject.transform.position).normalized;
-            // Get the angle from the normal of the snappoint and the camera. do % 180 to disregard - angles. normalize it and divide it by a number to set theweight of the angle
-            var angleFromPoint = Vector3.Angle(newNormal, Camera.main.transform.forward) % 180f / 180f * edgeBias;
-            var newBestValue = distance + angleFromPoint;
-
-            collisionCheckBlock.transform.position = child.position + GetOffset(collisionCheckBlock, newNormal);
-
-            if (bestValue < newBestValue || GetOverlaps(collisionCheckBlock, collisionPadding, placementLayer).Length > 0) continue;
-            closestSnapPoint = child;
-            bestValue = newBestValue;
-            normal = newNormal;
-            rotationReference = closestSnapPoint.parent;
-        }
-
-        blocks.Remove(collisionCheckBlock);
-        Destroy(collisionCheckBlock);
-
-        return closestSnapPoint;
-    }
-
-    private Transform GetSnapPoint(Vector3 hitPoint, GameObject hitObject) {
-        Transform closestSnapPoint = null;
-        var bestValue = Mathf.Infinity;
-
-        foreach (Transform child in hitObject.transform) {
-            if (!child.CompareTag("SnapPoint")) continue;
-            var distance = Vector3.Distance(hitPoint, child.position);
-            var newNormal = (child.position - hitObject.transform.position).normalized;
-            var newBestValue = distance;
-
-            if (bestValue < newBestValue) continue;
-            closestSnapPoint = child;
-            normal = newNormal;
-            bestValue = newBestValue;
-        }
-
-        return closestSnapPoint;
+        normal = hit.collider.transform.TransformDirection(inverseEdgeDistance.normalized);
+        
+        return hit.collider.transform.TransformPoint(inverseEdgeDistance.normalized);
     }
 
     private void SetPreviewOpacity(GameObject obj, Material previewMat) {
@@ -607,22 +496,6 @@ public class GridPlacement : MonoBehaviour
         }
 
         return false;
-    }
-
-    private int CalculateFaceId(Vector3 normal) {
-        int Id = 0;
-        float minAngle = float.MaxValue;
-
-        for (int i = 1; i <= 6; i++) {
-            float angle = Mathf.Min(minAngle, Vector3.Angle(FaceIdToVector(i), normal));
-
-            if (minAngle > angle) {
-                minAngle = angle;
-                Id = i;
-            }
-        }
-
-        return Id; // If its nothing return 0, 0 (not possible)
     }
 
     private int CalculateLocalFaceId(Vector3 normal, Transform refObject) {
@@ -686,21 +559,6 @@ public class GridPlacement : MonoBehaviour
         for (int i = 0; i < reparentBlocks.Count; i++) {
             reparentBlocks[i].transform.SetParent(newParent);
         }
-    }
-
-    private void RecalculateWeights(Transform ship) {
-        Rigidbody shipBody = activeBodies[ship];
-        float totalMass = 0;
-        Vector3 weightedMass = Vector3.zero;
-        foreach (Transform child in ship) {
-            float weight = blockTypes[blocks[child.gameObject].blockId].weight;
-            totalMass += weight;
-            weightedMass += child.localPosition * weight;
-        }
-
-        shipBody.mass = totalMass;
-        shipBody.centerOfMass = weightedMass / totalMass;
-        shipBody.WakeUp();
     }
 
     private void RemoveWeights(Transform ship, List<GameObject> removeBlocks) {

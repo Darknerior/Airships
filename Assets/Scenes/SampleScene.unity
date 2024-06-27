@@ -870,7 +870,7 @@ MonoBehaviour:
   edgeBias: 0.15
   edgeAngleFactor: 0.35
   rotationBias: 0.4
-  rotationAngleFactor: 0
+  rotationAngleFactor: 0.36
   rayPadding: 2
   reach: 10
   airshipPrefab: {fileID: 8182157964636440639, guid: 9893d1c1b20f2144e8e8b03fbaecce1d, type: 3}
