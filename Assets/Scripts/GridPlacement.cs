@@ -408,13 +408,18 @@ public class GridPlacement : MonoBehaviour
 
         BlockType currentBlockType = blockTypes[currentBlockId];
 
-        if (GetCollisionsFromPoint(rotObject.transform.TransformPoint(rotation * currentBlockType.collider.center), currentBlockType.collider.size, collisionPadding, rotObject.transform.rotation, collisionLayer).Length > 0) // Get an alternative rotation when overlapping with something
+        Vector3 toRotationReference = (rotationReference.position - rotObject.transform.position).normalized;
+        int rotObjectSnappoint = CalculateLocalFaceId(toRotationReference, rotObject.transform);=
+
+
+        if (!currentBlockType.CanAttach(rotObjectSnappoint) || GetCollisionsFromPoint(rotObject.transform.TransformPoint(rotation * currentBlockType.collider.center), currentBlockType.collider.size, collisionPadding, rotObject.transform.rotation, collisionLayer).Length > 0) // Get an alternative rotation when overlapping with something
         {
             Vector3[] adjacentVectors = GetAdjacentVectors(rotationReference.InverseTransformDirection(normal));
             for (int i = 0; i < 4; i++)
             {
                 rotation = SafeFromToRotation(-rotObject.transform.up, hit.collider.transform.TransformDirection(adjacentVectors[i]));
-                if (GetCollisionsFromPoint(rotObject.transform.TransformPoint(rotation * currentBlockType.collider.center), currentBlockType.collider.size, collisionPadding, rotation * rotObject.transform.rotation, collisionLayer).Length > 0) continue;
+                rotObjectSnappoint = CalculateLocalFaceId(rotation * toRotationReference, rotObject.transform);
+                if (rotObjectSnappoint == 0 || GetCollisionsFromPoint(rotObject.transform.TransformPoint(rotation * currentBlockType.collider.center), currentBlockType.collider.size, collisionPadding, rotation * rotObject.transform.rotation, collisionLayer).Length > 0) continue;
                 return rotation * rotObject.transform.rotation;
             }
         }
@@ -511,19 +516,7 @@ public class GridPlacement : MonoBehaviour
     }
 
     private int CalculateLocalFaceId(Vector3 normal, Transform refObject) {
-        int id = 0;
-        float minAngle = float.MaxValue;
-
-        for (int i = 1; i <= 6; i++) {
-            float angle = Mathf.Min(minAngle, Vector3.Angle(LocalFaceIdToVector(i, refObject), normal));
-
-            if (minAngle > angle) {
-                minAngle = angle;
-                id = i;
-            }
-        }
-
-        return id;
+        return FaceIdFromVector(refObject.InverseTransformDirection(normal));
     }
 
     int FaceIdFromVector(Vector3 normal) {
@@ -545,7 +538,7 @@ public class GridPlacement : MonoBehaviour
             Vector3 objectDirection = colTransform.position - checkObject.transform.position;
             int selfFaceId = CalculateLocalFaceId(objectDirection, checkObject.transform); // Check which face the object is near
 
-            if (IsAligned(checkObject.transform, objectDirection, selfFaceId)) // Check if the object is directly on it
+            if (selfFaceId > 0) // Check if the object is directly on it
             {
                 SetFace(checkObject, selfFaceId, colTransform.gameObject); // Attach the object to itself
                 int attachFaceId = CalculateLocalFaceId(-objectDirection, colTransform);
@@ -560,21 +553,6 @@ public class GridPlacement : MonoBehaviour
         if (checkObject.transform.parent == null) {
             CreateShip(new List<GameObject> { checkObject });
         }
-    }
-
-    private bool IsAligned(Transform checkObject, Vector3 objectDirection, int faceId) {
-        Vector3 angleVector = Vector3.zero;
-        switch (faceId)
-        {
-            case 1: angleVector = checkObject.forward; break;
-            case 2: angleVector = -checkObject.forward; break;
-            case 3: angleVector = -checkObject.right; break;
-            case 4: angleVector = checkObject.right; break;
-            case 5: angleVector = checkObject.up; break;
-            case 6: angleVector = -checkObject.up; break;
-        }
-
-        return Vector3.Angle(angleVector, objectDirection) < 1f;
     }
 
     private void ReParentBlocks(Transform newParent, List<GameObject> reparentBlocks) {
@@ -765,6 +743,17 @@ public class GridPlacement : MonoBehaviour
         public bool right;
         public bool up;
         public bool down;
+
+        public int attachmentPointCount()
+        {
+            int count = 0;
+            for (int i = 1; i <= 6; i++)
+            {
+                if (CanAttach(i)) count++;
+            }
+
+            return count;
+        }
 
         public bool CanAttach(int faceId) {
             switch (faceId) {
