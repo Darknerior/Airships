@@ -5,6 +5,7 @@ public class GridPlacement : MonoBehaviour
     public BlockType[] blockTypes;
     [Range(0, 1)] public float edgeBias = 0, edgeAngleFactor = 0;
     [Range(0, 1)] public float rotationBias = 0, rotationAngleFactor = 0;
+    [Range(0, 1)] public float closestBlockAngleWeight = 0;
     public float rayPadding = 0;
     public float reach = 10;
     public GameObject airshipPrefab;
@@ -239,10 +240,9 @@ public class GridPlacement : MonoBehaviour
     private void SetPreviewCube(RaycastHit hit) {
         // Adjust position to either ground hit or snap point
         rotationReference = hit.collider.transform;
-        var placementPosition = CalculatePlacementPosition(hit, _previewCube);
+        var placementPosition = CalculatePlacementPosition(hit);
         _previewCube.transform.position = placementPosition;
-        _previewCube.transform.up = (_previewCube.transform.position - rotationReference.position).normalized;
-        
+        _previewCube.transform.rotation = rotationReference.rotation;
         _previewCube.transform.rotation = GetBaseRotation(_previewCube, hit);
     }
 
@@ -257,43 +257,44 @@ public class GridPlacement : MonoBehaviour
         blocks.Add(_previewCube, new Block() { blockId = blockId, blockCollider = newCollider });
     }
 
-    private Vector3 CalculatePlacementPosition(RaycastHit hit, GameObject placementCube) {
+    private Vector3 CalculatePlacementPosition(RaycastHit hit) {
         normal = hit.normal;
-        var placementPosition = Vector3.zero;
+        var placementPosition = hit.point + GetOffset(_previewCube, normal);
 
-        if (hit.collider.gameObject.layer == _airshipLayer) placementPosition = GetBiasedSnapPoint(hit, edgeBias);
-        else placementPosition = hit.point + GetOffset(_previewCube, normal);
+        if (hit.collider.gameObject.layer == _airshipLayer) 
+        {
+            Vector3 localPlacePos = GetBiasedLocalSnapPoint(hit, edgeBias);
+            int faceId = FaceIdFromVector(localPlacePos.normalized);
+            if (blockTypes[blocks[hit.collider.gameObject].blockId].CanAttach(faceId)) placementPosition = hit.collider.transform.TransformPoint(localPlacePos);
+        }
 
-        GameObject collisionCheckBlock = CreateBlock(currentBlockId, placementPosition, placementCube.transform.rotation);
-        collisionCheckBlock.layer = LayerMask.NameToLayer("Preview");
-        collisionCheckBlock.name = "collisioncheck";
-
-        /*if (GetOverlaps(collisionCheckBlock, collisionPadding, collisionLayer).Length > 0) { // If you try to place inside another block
-            Collider[] surroundingCubes = GetOverlaps(placementCube, new Vector3(1, 1, 1), airshipLayer);
-            float closestDistance = float.MaxValue;
+        if (GetCollisionsFromPoint(placementPosition, Vector3.one, collisionPadding, rotationReference.rotation, collisionLayer).Length > 0) { // If you try to place inside another block
+            Collider[] surroundingCubes = GetCollisionsFromPoint(placementPosition, Vector3.one, Vector3.one, rotationReference.rotation, airshipLayer);
+            float bestValue = float.MaxValue;
 
             for (int i = 0; i < surroundingCubes.Length; i++) {
-                Collider collider = surroundingCubes[i];
-                var newClosestSnapPoint = GetSnapPoint(hit.point, collider.gameObject);
-                float distance = Vector3.Distance(newClosestSnapPoint.position, hit.point) + Vector3.Distance(newClosestSnapPoint.position, Camera.main.transform.position) * 0.5f;
-                if (distance < closestDistance) {
-                    Vector3 tempNormal = (newClosestSnapPoint.position - newClosestSnapPoint.parent.position).normalized;
-                    Vector3 tempPlacementPosition = newClosestSnapPoint.position + GetOffset(collisionCheckBlock, tempNormal); 
-                    collisionCheckBlock.transform.rotation = newClosestSnapPoint.parent.rotation;
-                    collisionCheckBlock.transform.position = tempPlacementPosition;
+                Transform blockTransform = surroundingCubes[i].transform;
+                BlockType placedOnBlockType = blockTypes[blocks[blockTransform.gameObject].blockId];
+       
+                for (int j = 1; j <= 6; j++)
+                {
+                    if (!placedOnBlockType.CanAttach(j)) continue;
 
-                    if (GetOverlaps(collisionCheckBlock, collisionPadding, collisionLayer).Length > 0) continue;
+                    Vector3 tempPos = blockTransform.TransformPoint(GetOffset(blockTransform.gameObject, FaceIdToVector(j)) * 2f);
+                    Vector3 tempNormal = (tempPos - blockTransform.position).normalized;
+                    float angleFactor = Vector3.Angle(tempNormal, Camera.main.transform.forward) % 180f / 180f;
+                    angleFactor = (1 - angleFactor) * closestBlockAngleWeight;
+                    float newValue = Vector3.Distance(tempPos, hit.point);
+
+                    if (newValue > bestValue || GetCollisionsFromPoint(tempPos, Vector3.one, collisionPadding, blockTransform.rotation, collisionLayer).Length > 0) continue;
 
                     normal = tempNormal;
-                    closestDistance = distance;
-                    placementPosition = tempPlacementPosition;
-                    rotationReference = newClosestSnapPoint.parent;
+                    placementPosition = tempPos;
+                    rotationReference = blockTransform;
+                    bestValue = newValue;
                 }
             }
-        } */
-
-        blocks.Remove(collisionCheckBlock);
-        Destroy(collisionCheckBlock);
+        }
 
         return placementPosition;
     }
@@ -404,11 +405,41 @@ public class GridPlacement : MonoBehaviour
         }
         
         Quaternion rotation = SafeFromToRotation(-rotObject.transform.up, inverseEdgeDistance);
-        Debug.DrawRay(rotObject.transform.position, -rotObject.transform.up * 2, Color.cyan);
-        Debug.DrawRay(rotObject.transform.position, inverseEdgeDistance * 2, Color.red);
-        Debug.Log("angle: " + Vector3.Angle(-rotObject.transform.up, inverseEdgeDistance) + " solution: " + rotation.eulerAngles.magnitude);
+
+        BlockType currentBlockType = blockTypes[currentBlockId];
+
+        if (GetCollisionsFromPoint(rotObject.transform.TransformPoint(rotation * currentBlockType.collider.center), currentBlockType.collider.size, collisionPadding, rotObject.transform.rotation, collisionLayer).Length > 0) // Get an alternative rotation when overlapping with something
+        {
+            Vector3[] adjacentVectors = GetAdjacentVectors(rotationReference.InverseTransformDirection(normal));
+            for (int i = 0; i < 4; i++)
+            {
+                rotation = SafeFromToRotation(-rotObject.transform.up, hit.collider.transform.TransformDirection(adjacentVectors[i]));
+                if (GetCollisionsFromPoint(rotObject.transform.TransformPoint(rotation * currentBlockType.collider.center), currentBlockType.collider.size, collisionPadding, rotation * rotObject.transform.rotation, collisionLayer).Length > 0) continue;
+                return rotation * rotObject.transform.rotation;
+            }
+        }
 
         return rotation * rotObject.transform.rotation;
+    }
+
+    private Vector3 GetBiasedLocalSnapPoint(RaycastHit hit, float bias)
+    {
+        Vector4 edgeData = GetClosestEdgeData(hit);
+        if (edgeData == Vector4.zero) return Vector3.zero;
+
+        Vector3 inverseEdgeDistance = edgeData;
+        float maxValue = edgeData.w;
+
+        float CloseToAngleFactor = Vector3.Angle(inverseEdgeDistance.normalized, Camera.main.transform.forward) % 180f / 180f;
+
+        if (0.5f - maxValue > bias || CloseToAngleFactor < edgeAngleFactor)
+        {
+            inverseEdgeDistance = hit.collider.transform.InverseTransformDirection(hit.normal);
+        }
+
+        normal = hit.collider.transform.TransformDirection(inverseEdgeDistance.normalized);
+
+        return inverseEdgeDistance.normalized;
     }
 
     public Quaternion SafeFromToRotation(Vector3 fromVector, Vector3 toVector)
@@ -423,25 +454,6 @@ public class GridPlacement : MonoBehaviour
         {
             return Quaternion.FromToRotation(fromVector, toVector);
         }
-    }
-
-
-    private Vector3 GetBiasedSnapPoint(RaycastHit hit, float bias) {
-        Vector4 edgeData = GetClosestEdgeData(hit);
-        if (edgeData == Vector4.zero) return Vector3.zero;
-
-        Vector3 inverseEdgeDistance = edgeData;
-        float maxValue = edgeData.w;
-
-        float CloseToAngleFactor = Vector3.Angle(inverseEdgeDistance.normalized, Camera.main.transform.forward) % 180f / 180f;
-
-        if (0.5f - maxValue > bias || CloseToAngleFactor < edgeAngleFactor) {
-            inverseEdgeDistance = hit.collider.transform.InverseTransformDirection(hit.normal);
-        }
-
-        normal = hit.collider.transform.TransformDirection(inverseEdgeDistance.normalized);
-        
-        return hit.collider.transform.TransformPoint(inverseEdgeDistance.normalized);
     }
 
     private void SetPreviewOpacity(GameObject obj, Material previewMat) {
@@ -512,6 +524,16 @@ public class GridPlacement : MonoBehaviour
         }
 
         return id;
+    }
+
+    int FaceIdFromVector(Vector3 normal) {
+        Vector3[] vectors = { new(0, 0, -1), new(0, 0, 1), new(-1, 0, 0), new(1, 0, 0), new(0, 1, 0), new(0, -1, 0) };
+
+        for (int i = 0; i < 6; i++) {
+            if (vectors[i] == normal) return i + 1;
+        }
+
+        return 0;
     }
 
     private void CombineAdjacentBlocks(GameObject checkObject) {
@@ -603,6 +625,11 @@ public class GridPlacement : MonoBehaviour
         }
 
         return finalOverlaps.ToArray();
+    }
+
+    private Collider[] GetCollisionsFromPoint(Vector3 position, Vector3 halfExtents, Vector3 padding, Quaternion rotation, LayerMask layerMask)
+    {
+        return Physics.OverlapBox(position, new Vector3(0.5f, 0.5f, 0.5f) + padding, rotation, layerMask);
     }
 
     private void ClearFaces(GameObject clearObject) {
@@ -709,10 +736,28 @@ public class GridPlacement : MonoBehaviour
         return vectors[faceId - 1];
     }
 
+    Vector3[] GetAdjacentVectors(Vector3 localNormal)
+    {
+        Vector3[] surroundingVectors = new Vector3[4];
+        int counter = 0;
+        for (int i = 1; i <= 6; i++)
+        {
+            Vector3 vector = FaceIdToVector(i);
+            if (vector != localNormal && vector != -localNormal)
+            {
+                surroundingVectors[counter] = vector;
+                counter++;
+            }
+        }
+
+        return surroundingVectors;
+    }
+
     [System.Serializable]
     public struct BlockType {
         public float weight; // Weight of the block
         public GameObject blockPrefab; // The prefab for the block
+        public BoxCollider collider;
         // If this block can attach on that face
         public bool front;
         public bool back;

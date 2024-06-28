@@ -837,6 +837,7 @@ MonoBehaviour:
   blockTypes:
   - weight: 100
     blockPrefab: {fileID: 7314423673160077377, guid: e75563652d93ade40a3b0484343ccb74, type: 3}
+    collider: {fileID: 7314423673160077378, guid: e75563652d93ade40a3b0484343ccb74, type: 3}
     front: 1
     back: 1
     left: 1
@@ -845,6 +846,7 @@ MonoBehaviour:
     down: 1
   - weight: 50
     blockPrefab: {fileID: 5148620716642931790, guid: 8cd4ba62efd7b9a41a6c969d1010f9b4, type: 3}
+    collider: {fileID: 5148620716642931789, guid: 8cd4ba62efd7b9a41a6c969d1010f9b4, type: 3}
     front: 1
     back: 1
     left: 1
@@ -853,24 +855,18 @@ MonoBehaviour:
     down: 1
   - weight: 1000000
     blockPrefab: {fileID: 7314423673160077377, guid: e75563652d93ade40a3b0484343ccb74, type: 3}
+    collider: {fileID: 7314423673160077378, guid: e75563652d93ade40a3b0484343ccb74, type: 3}
     front: 1
     back: 1
     left: 1
     right: 1
     up: 1
     down: 1
-  - weight: 60
-    blockPrefab: {fileID: 7314423673160077377, guid: e75563652d93ade40a3b0484343ccb74, type: 3}
-    front: 1
-    back: 1
-    left: 1
-    right: 1
-    up: 0
-    down: 1
   edgeBias: 0.15
   edgeAngleFactor: 0.35
   rotationBias: 0.4
   rotationAngleFactor: 0.36
+  closestBlockAngleWeight: 1
   rayPadding: 2
   reach: 10
   airshipPrefab: {fileID: 8182157964636440639, guid: 9893d1c1b20f2144e8e8b03fbaecce1d, type: 3}
@@ -880,7 +876,7 @@ MonoBehaviour:
     m_Bits: 72
   collisionLayer:
     serializedVersion: 2
-    m_Bits: 91
+    m_Bits: 73
   airshipLayer:
     serializedVersion: 2
     m_Bits: 8
