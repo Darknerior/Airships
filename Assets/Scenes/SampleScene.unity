@@ -679,6 +679,7 @@ GameObject:
   - component: {fileID: 550829535}
   - component: {fileID: 550829534}
   - component: {fileID: 550829536}
+  - component: {fileID: 550829537}
   m_Layer: 0
   m_Name: Capsule
   m_TagString: Untagged
@@ -834,6 +835,43 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 49df01de9d7d10a4590efb31dfcb04c7, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
+  edgeBias: 0.15
+  edgeAngleFactor: 0.35
+  rotationBias: 0.4
+  rotationAngleFactor: 0.36
+  closestBlockAngleWeight: 1
+  rayPadding: 2
+  reach: 10
+  airshipPrefab: {fileID: 8182157964636440639, guid: 9893d1c1b20f2144e8e8b03fbaecce1d, type: 3}
+  previewMaterial: {fileID: 2100000, guid: 64cdadfd192f3244483842110995ba50, type: 2}
+  placementLayer:
+    serializedVersion: 2
+    m_Bits: 72
+  collisionLayer:
+    serializedVersion: 2
+    m_Bits: 73
+  place: 13
+  edit: 324
+  cancel: 9
+  state: 0
+  rotx: 103
+  rotnegx: 116
+  rotz: 102
+  rotnegz: 104
+  roty: 118
+  rotnegy: 98
+--- !u!114 &550829537
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 550829529}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 40eb1cc44d2e3404b80f94f06c5645d2, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
   blockTypes:
   - weight: 100
     blockPrefab: {fileID: 7314423673160077377, guid: e75563652d93ade40a3b0484343ccb74, type: 3}
@@ -853,43 +891,15 @@ MonoBehaviour:
     right: 1
     up: 0
     down: 1
-  - weight: 1000000
-    blockPrefab: {fileID: 7314423673160077377, guid: e75563652d93ade40a3b0484343ccb74, type: 3}
-    collider: {fileID: 7314423673160077378, guid: e75563652d93ade40a3b0484343ccb74, type: 3}
+  - weight: 1e+10
+    blockPrefab: {fileID: 7314423673160077377, guid: c10157a544e38754497f000001148e69, type: 3}
+    collider: {fileID: 7314423673160077378, guid: c10157a544e38754497f000001148e69, type: 3}
     front: 1
     back: 1
     left: 1
     right: 1
     up: 1
     down: 1
-  edgeBias: 0.15
-  edgeAngleFactor: 0.35
-  rotationBias: 0.4
-  rotationAngleFactor: 0.36
-  closestBlockAngleWeight: 1
-  rayPadding: 2
-  reach: 10
-  airshipPrefab: {fileID: 8182157964636440639, guid: 9893d1c1b20f2144e8e8b03fbaecce1d, type: 3}
-  previewMaterial: {fileID: 2100000, guid: 64cdadfd192f3244483842110995ba50, type: 2}
-  placementLayer:
-    serializedVersion: 2
-    m_Bits: 72
-  collisionLayer:
-    serializedVersion: 2
-    m_Bits: 73
-  airshipLayer:
-    serializedVersion: 2
-    m_Bits: 8
-  place: 13
-  edit: 324
-  cancel: 9
-  state: 0
-  rotx: 103
-  rotnegx: 116
-  rotz: 102
-  rotnegz: 104
-  roty: 118
-  rotnegy: 98
 --- !u!1 &585016279
 GameObject:
   m_ObjectHideFlags: 0
@@ -965,37 +975,6 @@ CanvasRenderer:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 585016279}
   m_CullTransparentMesh: 0
---- !u!1 &586629622
-GameObject:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  serializedVersion: 6
-  m_Component:
-  - component: {fileID: 586629623}
-  m_Layer: 0
-  m_Name: AirshipTest
-  m_TagString: Untagged
-  m_Icon: {fileID: 0}
-  m_NavMeshLayer: 0
-  m_StaticEditorFlags: 0
-  m_IsActive: 1
---- !u!4 &586629623
-Transform:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 586629622}
-  serializedVersion: 2
-  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: 0, y: 0, z: 0}
-  m_LocalScale: {x: 1, y: 1, z: 1}
-  m_ConstrainProportionsScale: 0
-  m_Children: []
-  m_Father: {fileID: 0}
-  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1 &656749070
 GameObject:
   m_ObjectHideFlags: 0
@@ -2618,4 +2597,3 @@ SceneRoots:
   - {fileID: 1351177574}
   - {fileID: 114530208}
   - {fileID: 4083637935514807844}
-  - {fileID: 586629623}

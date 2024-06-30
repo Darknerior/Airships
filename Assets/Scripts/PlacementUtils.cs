@@ -4,6 +4,9 @@ using UnityEngine;
 
 public static class PlacementUtils
 {
+    public readonly static Vector3 collisionPadding = new Vector3(-0.002f, -0.002f, -0.002f);
+    public readonly static Vector3 overlapPadding = new Vector3(0.002f, 0.002f, 0.002f);
+
     public static Vector3 GetOffset(BoxCollider collider, Vector3 hitNormal)
     {
         var center = collider.center * 2f; // If a collider is offset we adjust the offset accordingly (*2f because the added height is the offset *2)
@@ -18,6 +21,21 @@ public static class PlacementUtils
         );
 
         return sideOffset;
+    }
+
+    public static int LayerMaskToLayer(LayerMask layerMask)
+    {
+        // Convert the LayerMask to the corresponding layer number
+        int layerMaskValue = layerMask.value;
+        int layer = 0;
+
+        while (layerMaskValue > 1)
+        {
+            layerMaskValue >>= 1;
+            layer++;
+        }
+
+        return layer;
     }
 
     public static Vector4 GetClosestEdgeData(RaycastHit hit, BoxCollider collider)
@@ -110,5 +128,19 @@ public static class PlacementUtils
     public static Collider[] GetCollisionsFromPoint(Vector3 position, Vector3 halfExtents, Vector3 padding, Quaternion rotation, LayerMask layerMask)
     {
         return Physics.OverlapBox(position, new Vector3(0.5f, 0.5f, 0.5f) + padding, rotation, layerMask);
+    }
+
+    public static Collider[] GetOverlaps(GameObject checkObject, BoxCollider boxCollider, Vector3 padding, LayerMask layerMask)
+    {
+        Collider[] overlaps = Physics.OverlapBox(checkObject.transform.TransformPoint(boxCollider.center), boxCollider.size / 2 + padding, checkObject.transform.rotation, layerMask);
+        List<Collider> finalOverlaps = new();
+
+        for (int i = 0; i < overlaps.Length; i++)
+        {
+            if (overlaps[i].transform == checkObject.transform) continue;
+            finalOverlaps.Add(overlaps[i]);
+        }
+
+        return finalOverlaps.ToArray();
     }
 }

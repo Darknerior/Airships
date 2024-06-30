@@ -12,6 +12,7 @@ TagManager:
   - Right
   - Up
   - Down
+  - Airship
   layers:
   - Default
   - TransparentFX
