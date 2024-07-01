@@ -23,6 +23,11 @@ public static class PlacementUtils
         return sideOffset;
     }
 
+    public static int CalculateLocalFaceIdFromRotation(Quaternion rotation, Vector3 normal)
+    {
+        return FaceIdFromVector(Quaternion.Inverse(rotation) * normal);
+    }
+
     public static int LayerMaskToLayer(LayerMask layerMask)
     {
         // Convert the LayerMask to the corresponding layer number
@@ -84,6 +89,8 @@ public static class PlacementUtils
 
     public static Vector3[] GetAdjacentVectors(Vector3 localNormal)
     {
+        if (localNormal.magnitude != 1) return null;
+
         Vector3[] surroundingVectors = new Vector3[4];
         int counter = 0;
         for (int i = 1; i <= 6; i++)

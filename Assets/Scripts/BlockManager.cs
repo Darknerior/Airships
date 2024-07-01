@@ -8,10 +8,16 @@ public class BlockManager : MonoBehaviour
     public Dictionary<GameObject, Block> blocks; // Integer is the Id of the block
     private Dictionary<Transform, Rigidbody> activeBodies;
 
-    private void Start()
+    public void Initialize()
     {
         blocks = new();
         activeBodies = new();
+    }
+
+    private void AttachBlocks(GameObject attach1, GameObject attach2, int attach1Id, int attach2Id)
+    {
+        SetFace(attach1, attach1Id, attach2);
+        SetFace(attach2, attach2Id, attach1);
     }
 
     public void CombineAdjacentBlocks(GameObject checkObject, Collider[] surroundingObjects)
@@ -25,9 +31,9 @@ public class BlockManager : MonoBehaviour
 
             if (selfFaceId > 0) // Check if the object is directly on it
             {
-                SetFace(checkObject, selfFaceId, colTransform.gameObject); // Attach the object to itself
                 int attachFaceId = PlacementUtils.CalculateLocalFaceId(-objectDirection, colTransform);
-                SetFace(colTransform.gameObject, attachFaceId, checkObject); // Attach itself to the object
+                AttachBlocks(checkObject, colTransform.gameObject, selfFaceId, attachFaceId);
+
                 if (colTransform.parent != checkObject.transform.parent)
                 {
                     checkObject.transform.SetParent(colTransform.parent);
@@ -302,6 +308,8 @@ public struct BlockType
     public float weight; // Weight of the block
     public GameObject blockPrefab; // The prefab for the block
     public BoxCollider collider;
+    public Material material;
+
     // If this block can attach on that face
     public bool front;
     public bool back;

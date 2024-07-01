@@ -6,52 +6,43 @@ public class GridPlacement : MonoBehaviour
     [Range(0, 1)] public float rotationBias = 0, rotationAngleFactor = 0;
     [Range(0, 1)] public float closestBlockAngleWeight = 0;
     private BlockManager _blockManager;
+    private PreviewManager _previewManager;
     public float rayPadding = 0;
     public float reach = 10;
-    public GameObject airshipPrefab;
-    private GameObject _previewCube;
-    private GameObject _previewAirship;
-    public Material previewMaterial; 
     public LayerMask placementLayer; // The layers we can player on
     public LayerMask collisionLayer;
     public LayerMask airshipLayer;
     int airshipLayerIndex;
+    Vector3 placementPosition;
+    Quaternion placementRotation;
 
     // Temp keybinds
     public KeyCode place;
     public KeyCode edit;
     public KeyCode cancel;
     public PlaceState state;
-
-    // make Settings for interactable ui, switch between rotations and individual keybinds
-    public KeyCode rotx;
-    public KeyCode rotnegx;
-    public KeyCode rotz;
-    public KeyCode rotnegz;
-    public KeyCode roty;
-    public KeyCode rotnegy;
     
     public enum PlaceState {
         nothing,
         place,
-        edit
+        edit,
+        shipEdit
     };
 
     // Value holders for editing
     private int currentBlockId = 0;
     private GameObject editObject;
     private MeshRenderer editObjectRenderer;
-    private GameObject _previewEditObject;
-    private GameObject shipObject;
-    private Vector3 editOffset;
-    private Transform previousHitBlock; // Keep track of the previous block hit by the raycast for accurate snaprotation
     private Transform rotationReference;
-    private Vector3 baseRotation;
     private Vector3 normal;
 
-    private void Start() {
+    private void Awake() {
         _blockManager = GetComponent<BlockManager>();
-        _previewCube = CreatePreviewBlock(0);
+        _previewManager = GetComponent<PreviewManager>();
+        _blockManager.Initialize();
+        _previewManager.SetNewPreviewBlock(_blockManager.GetBlockTypeFromId(0));
+        _previewManager.SetActive(false);
+
         airshipLayerIndex = PlacementUtils.LayerMaskToLayer(airshipLayer);
     }
 
@@ -87,22 +78,27 @@ public class GridPlacement : MonoBehaviour
         }
 
         if (closestBlock == null && !Physics.Raycast(camPos, direction, out hit, Mathf.Infinity, placementLayer)) {
-            _previewCube.SetActive(false);
+            _previewManager.SetActive(false);
             rotationReference = null;
             return;
         }
 
-        StateManager();
+        StateManager(hit);
 
         switch (state) { // What to do in each place state
-            case PlaceState.place: PlaceCube(hit); break;
-            case PlaceState.edit: EditCube(hit); break;
+            case PlaceState.nothing: return;
+            case PlaceState.place: BlockPicker(); break;
+            case PlaceState.edit: if (editObject == null) state = PlaceState.nothing; break;
         }
+
+        CalculateTransform(hit);
+
+        _previewManager.SetTransform(placementPosition, placementRotation);
 
         PlacementManager(hit);
     }
 
-    private void StateManager() {
+    private void StateManager(RaycastHit hit) {
         if (Input.GetKeyDown(cancel)) {
             if (state == PlaceState.edit) CancelEdit();
             if (state == PlaceState.place) CancelPlace();
@@ -117,6 +113,7 @@ public class GridPlacement : MonoBehaviour
             }
 
             state = PlaceState.place;
+            _previewManager.SetActive(true);
             return;
         }
         if (Input.GetKeyDown(edit)) {
@@ -128,6 +125,13 @@ public class GridPlacement : MonoBehaviour
 
             if (state == PlaceState.nothing) {
                 state = PlaceState.edit;
+
+                editObject = hit.collider.gameObject;
+                currentBlockId = _blockManager.GetBlockId(editObject);
+                _previewManager.SetNewPreviewBlock(_blockManager.GetBlockTypeFromId(currentBlockId));
+                editObjectRenderer = editObject.GetComponent<MeshRenderer>();
+                editObject.layer = 0;
+                editObjectRenderer.enabled = false;
                 return;
             }
         }
@@ -135,11 +139,11 @@ public class GridPlacement : MonoBehaviour
 
     private void PlacementManager(RaycastHit hit) {
         BoxCollider collider = _blockManager.GetBlockTypeFromId(currentBlockId).collider;
-        if (Input.GetMouseButtonDown(0) && PlacementUtils.GetCollisionsFromPoint(_previewCube.transform.TransformPoint(collider.center), collider.size, PlacementUtils.collisionPadding, _previewCube.transform.rotation, collisionLayer).Length == 0) { // Left mouse click
+        if (Input.GetMouseButtonDown(0) && PlacementUtils.GetCollisionsFromPoint(placementPosition + placementRotation * collider.center, collider.size, PlacementUtils.collisionPadding, placementRotation, collisionLayer).Length == 0) { // Left mouse click
             GameObject placedObject = null;
 
             if (state == PlaceState.place) {
-                placedObject = _blockManager.CreateBlock(currentBlockId, _previewCube.transform.position, _previewCube.transform.rotation, airshipLayerIndex);
+                placedObject = _blockManager.CreateBlock(currentBlockId, placementPosition, placementRotation, airshipLayerIndex);
             }
 
             if (state == PlaceState.edit) {
@@ -147,58 +151,27 @@ public class GridPlacement : MonoBehaviour
                 editObjectRenderer.enabled = true;
                 editObject.layer = airshipLayerIndex;
                 _blockManager.DetachBlock(editObject); // Clear the face attachments of the edited block
-                editObject.transform.SetPositionAndRotation(_previewCube.transform.position, _previewCube.transform.rotation);
+                editObject.transform.SetPositionAndRotation(placementPosition, placementRotation);
                 CancelEdit();
             }
 
             Collider[] surroundingObjects = PlacementUtils.GetOverlaps(placedObject, _blockManager.GetBlockType(placedObject).collider, PlacementUtils.overlapPadding + Vector3.one, airshipLayer);
-            Debug.Log(surroundingObjects.Length);
             _blockManager.CombineAdjacentBlocks(placedObject, surroundingObjects);
         }
-    }
-
-    private void AttachBlockTo(GameObject ToAttach, GameObject AttachTo, int selfId, int AttachId) {
-
     }
 
     private void CancelEdit() {
         editObjectRenderer.enabled = true;
         editObject.layer = airshipLayerIndex;
         editObject = null;
-        _previewCube.SetActive(false);
+        _previewManager.SetActive(false);
         currentBlockId = 0;
         state = PlaceState.nothing;
     }
 
     private void CancelPlace() {
-        _previewCube.SetActive(false);
+        _previewManager.SetActive(false);
         state = PlaceState.nothing;
-    }
-
-    private void EditCube(RaycastHit hit) {
-        GameObject hitObject = hit.collider.gameObject;
-
-        if (editObject == null && hitObject.layer == airshipLayerIndex) {
-            editObject = hitObject;
-            _previewCube = CreatePreviewBlock(_blockManager.GetBlockId(hitObject));
-            editObjectRenderer = editObject.GetComponent<MeshRenderer>();
-            editObject.layer = 0;
-            editObjectRenderer.enabled = false;
-        } 
-        else if (editObject == null) {
-            state = PlaceState.nothing;
-            return;
-        }
-
-        _previewCube.SetActive(true);
-        SetPreviewCube(hit);
-        return;
-    }
-
-    private void PlaceCube(RaycastHit hit) {
-        _previewCube.SetActive(true);
-        BlockPicker();
-        SetPreviewCube(hit);
     }
 
     private void BlockPicker() {
@@ -210,26 +183,15 @@ public class GridPlacement : MonoBehaviour
 
         if (newBlockId != currentBlockId) {
             currentBlockId = newBlockId;
-            Destroy(_previewCube);
-            _previewCube = CreatePreviewBlock(newBlockId);
+            _previewManager.SetNewPreviewBlock(_blockManager.GetBlockTypeFromId(newBlockId));
         }
     }
 
-    private void SetPreviewCube(RaycastHit hit) {
+    private void CalculateTransform(RaycastHit hit) {
         // Adjust position to either ground hit or snap point
         rotationReference = hit.collider.transform;
-        var placementPosition = CalculatePlacementPosition(hit);
-        _previewCube.transform.position = placementPosition;
-        _previewCube.transform.rotation = rotationReference.rotation;
-        _previewCube.transform.rotation = GetBaseRotation(_previewCube, hit);
-    }
-
-    GameObject CreatePreviewBlock(int blockId) {
-        GameObject newPreviewBlock = _blockManager.CreateBlock(blockId, Vector3.zero, Quaternion.identity, LayerMask.NameToLayer("Preview"));
-        SetPreviewOpacity(newPreviewBlock, previewMaterial);
-        BoxCollider newCollider = newPreviewBlock.GetComponent<BoxCollider>();
-        newCollider.isTrigger = true;
-        return newPreviewBlock;
+        placementPosition = CalculatePlacementPosition(hit);
+        placementRotation = GetBaseRotation(rotationReference.rotation, placementPosition, hit);
     }
 
     private Vector3 CalculatePlacementPosition(RaycastHit hit) {
@@ -274,7 +236,7 @@ public class GridPlacement : MonoBehaviour
         return placementPosition;
     }
 
-    private Quaternion GetBaseRotation(GameObject rotObject, RaycastHit hit) {
+    private Quaternion GetBaseRotation(Quaternion baseRotation, Vector3 basePosition, RaycastHit hit) {
         if (hit.collider.gameObject.layer != airshipLayerIndex) return Quaternion.identity;
 
         Vector4 edgeData = PlacementUtils.GetClosestEdgeData(hit, _blockManager.GetBlockType(hit.collider.gameObject).collider);
@@ -288,27 +250,28 @@ public class GridPlacement : MonoBehaviour
             inverseEdgeDistance = -normal;
         }
         
-        Quaternion rotation = PlacementUtils.SafeFromToRotation(-rotObject.transform.up, inverseEdgeDistance, rotationReference);
+        Quaternion rotation = PlacementUtils.SafeFromToRotation(baseRotation * Vector3.down, inverseEdgeDistance, rotationReference);
 
         BlockType currentBlockType = _blockManager.GetBlockTypeFromId(currentBlockId);
 
-        Vector3 toRotationReference = (rotationReference.position - rotObject.transform.position).normalized;
-        int rotObjectSnappoint = PlacementUtils.CalculateLocalFaceId(toRotationReference, rotObject.transform);
+        Vector3 toRotationReference = (rotationReference.position - basePosition).normalized;
+        int rotObjectSnappoint = PlacementUtils.CalculateLocalFaceIdFromRotation(baseRotation, toRotationReference);
 
-
-        if (!currentBlockType.CanAttach(rotObjectSnappoint) || PlacementUtils.GetCollisionsFromPoint(rotObject.transform.TransformPoint(rotation * currentBlockType.collider.center), currentBlockType.collider.size, PlacementUtils.collisionPadding, rotObject.transform.rotation, collisionLayer).Length > 0) // Get an alternative rotation when overlapping with something
+        if (!currentBlockType.CanAttach(rotObjectSnappoint) || PlacementUtils.GetCollisionsFromPoint(basePosition + baseRotation * (rotation * currentBlockType.collider.center), currentBlockType.collider.size, PlacementUtils.collisionPadding, baseRotation, collisionLayer).Length > 0) // Get an alternative rotation when overlapping with something
         {
-            Vector3[] adjacentVectors = PlacementUtils.GetAdjacentVectors(rotationReference.InverseTransformDirection(normal));
+            Vector3[] adjacentVectors = PlacementUtils.GetAdjacentVectors(hit.collider.transform.InverseTransformDirection(normal));
+            if (adjacentVectors == null) return rotation * baseRotation;
+
             for (int i = 0; i < 4; i++)
             {
-                rotation = PlacementUtils.SafeFromToRotation(-rotObject.transform.up, hit.collider.transform.TransformDirection(adjacentVectors[i]), rotationReference);
-                rotObjectSnappoint = PlacementUtils.CalculateLocalFaceId(rotation * toRotationReference, rotObject.transform);
-                if (rotObjectSnappoint == 0 || PlacementUtils.GetCollisionsFromPoint(rotObject.transform.TransformPoint(rotation * currentBlockType.collider.center), currentBlockType.collider.size, PlacementUtils.collisionPadding, rotation * rotObject.transform.rotation, collisionLayer).Length > 0) continue;
-                return rotation * rotObject.transform.rotation;
+                rotation = PlacementUtils.SafeFromToRotation(baseRotation * Vector3.down, hit.collider.transform.TransformDirection(adjacentVectors[i]), rotationReference);
+                rotObjectSnappoint = PlacementUtils.CalculateLocalFaceIdFromRotation(baseRotation, rotation * toRotationReference);
+                if (rotObjectSnappoint == 0 || PlacementUtils.GetCollisionsFromPoint(basePosition + baseRotation * (rotation * currentBlockType.collider.center), currentBlockType.collider.size, PlacementUtils.collisionPadding, rotation * baseRotation, collisionLayer).Length > 0) continue;
+                return rotation * baseRotation;
             }
         }
 
-        return rotation * rotObject.transform.rotation;
+        return rotation * baseRotation;
     }
 
     private Vector3 GetBiasedLocalSnapPoint(RaycastHit hit, float bias)
@@ -329,24 +292,5 @@ public class GridPlacement : MonoBehaviour
         normal = hit.collider.transform.TransformDirection(inverseEdgeDistance.normalized);
 
         return inverseEdgeDistance.normalized;
-    }
-
-    private void SetPreviewOpacity(GameObject obj, Material previewMat) {
-        if (!obj.TryGetComponent(out Renderer renderer)) return;
-        var cloneMat = new Material(previewMat);
-        renderer.material = cloneMat;
-    }
-
-    private GameObject CreatePreviewShip(GameObject copyShip) {
-        // Generate a preview of the ship
-        GameObject previewShip = new GameObject("PreviewShip");
-        foreach (Transform child in copyShip.transform) {
-            GameObject previewChild = Instantiate(child.gameObject, child.localPosition, child.localRotation, previewShip.transform);
-            previewChild.GetComponent<BoxCollider>().isTrigger = true;
-            if (child == editObject.transform) _previewEditObject = previewChild;
-            previewChild.gameObject.layer = LayerMask.NameToLayer("Preview");
-            SetPreviewOpacity(previewChild, previewMaterial);
-        }
-        return previewShip;
     }
 }

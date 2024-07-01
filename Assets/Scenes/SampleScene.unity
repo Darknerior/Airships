@@ -680,6 +680,7 @@ GameObject:
   - component: {fileID: 550829534}
   - component: {fileID: 550829536}
   - component: {fileID: 550829537}
+  - component: {fileID: 550829538}
   m_Layer: 0
   m_Name: Capsule
   m_TagString: Untagged
@@ -839,27 +840,22 @@ MonoBehaviour:
   edgeAngleFactor: 0.35
   rotationBias: 0.4
   rotationAngleFactor: 0.36
-  closestBlockAngleWeight: 1
+  closestBlockAngleWeight: 0.683
   rayPadding: 2
   reach: 10
-  airshipPrefab: {fileID: 8182157964636440639, guid: 9893d1c1b20f2144e8e8b03fbaecce1d, type: 3}
-  previewMaterial: {fileID: 2100000, guid: 64cdadfd192f3244483842110995ba50, type: 2}
   placementLayer:
     serializedVersion: 2
     m_Bits: 72
   collisionLayer:
     serializedVersion: 2
     m_Bits: 73
+  airshipLayer:
+    serializedVersion: 2
+    m_Bits: 8
   place: 13
   edit: 324
   cancel: 9
   state: 0
-  rotx: 103
-  rotnegx: 116
-  rotz: 102
-  rotnegz: 104
-  roty: 118
-  rotnegy: 98
 --- !u!114 &550829537
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -876,6 +872,7 @@ MonoBehaviour:
   - weight: 100
     blockPrefab: {fileID: 7314423673160077377, guid: e75563652d93ade40a3b0484343ccb74, type: 3}
     collider: {fileID: 7314423673160077378, guid: e75563652d93ade40a3b0484343ccb74, type: 3}
+    material: {fileID: 2100000, guid: c391e2650c9a9c6408194b97547bfed5, type: 2}
     front: 1
     back: 1
     left: 1
@@ -885,21 +882,36 @@ MonoBehaviour:
   - weight: 50
     blockPrefab: {fileID: 5148620716642931790, guid: 8cd4ba62efd7b9a41a6c969d1010f9b4, type: 3}
     collider: {fileID: 5148620716642931789, guid: 8cd4ba62efd7b9a41a6c969d1010f9b4, type: 3}
+    material: {fileID: 2100000, guid: c391e2650c9a9c6408194b97547bfed5, type: 2}
     front: 1
     back: 1
     left: 1
     right: 1
     up: 0
     down: 1
-  - weight: 1e+10
+  - weight: 100000
     blockPrefab: {fileID: 7314423673160077377, guid: c10157a544e38754497f000001148e69, type: 3}
     collider: {fileID: 7314423673160077378, guid: c10157a544e38754497f000001148e69, type: 3}
+    material: {fileID: 2100000, guid: a6e536abf715b36408a2347df511c354, type: 2}
     front: 1
     back: 1
     left: 1
     right: 1
     up: 1
     down: 1
+--- !u!114 &550829538
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 550829529}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 6af4aa6883d0c6946a654dcb05c53615, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  previewOpacity: 0.5
 --- !u!1 &585016279
 GameObject:
   m_ObjectHideFlags: 0
