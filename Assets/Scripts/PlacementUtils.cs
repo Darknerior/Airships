@@ -132,9 +132,9 @@ public static class PlacementUtils
         }
     }
 
-    public static Collider[] GetCollisionsFromPoint(Vector3 position, Vector3 halfExtents, Vector3 padding, Quaternion rotation, LayerMask layerMask)
+    public static Collider[] GetCollisionsFromPoint(Vector3 position, Vector3 extents, Vector3 padding, Quaternion rotation, LayerMask layerMask)
     {
-        return Physics.OverlapBox(position, new Vector3(0.5f, 0.5f, 0.5f) + padding, rotation, layerMask);
+        return Physics.OverlapBox(position, extents * 0.5f + padding, rotation, layerMask);
     }
 
     public static Collider[] GetOverlaps(GameObject checkObject, BoxCollider boxCollider, Vector3 padding, LayerMask layerMask)

@@ -15,6 +15,7 @@ public class PreviewManager : MonoBehaviour
 
     public void SetActive(bool active)
     {
+        if (_previewCube.gameObject.activeSelf == active) return;
         _previewCube.gameObject.SetActive(active);
     }
 

@@ -83,6 +83,8 @@ public class GridPlacement : MonoBehaviour
             return;
         }
 
+        _previewManager.SetActive(true);
+
         StateManager(hit);
 
         switch (state) { // What to do in each place state
@@ -95,7 +97,7 @@ public class GridPlacement : MonoBehaviour
 
         _previewManager.SetTransform(placementPosition, placementRotation);
 
-        PlacementManager(hit);
+        PlacementManager();
     }
 
     private void StateManager(RaycastHit hit) {
@@ -137,7 +139,7 @@ public class GridPlacement : MonoBehaviour
         }
     }
 
-    private void PlacementManager(RaycastHit hit) {
+    private void PlacementManager() {
         BoxCollider collider = _blockManager.GetBlockTypeFromId(currentBlockId).collider;
         if (Input.GetMouseButtonDown(0) && PlacementUtils.GetCollisionsFromPoint(placementPosition + placementRotation * collider.center, collider.size, PlacementUtils.collisionPadding, placementRotation, collisionLayer).Length == 0) { // Left mouse click
             GameObject placedObject = null;
@@ -198,14 +200,17 @@ public class GridPlacement : MonoBehaviour
         normal = hit.normal;
         var placementPosition = hit.point + PlacementUtils.GetOffset(_blockManager.GetBlockTypeFromId(currentBlockId).collider, normal);
 
+        bool canAttach = true;
+
         if (hit.collider.gameObject.layer == airshipLayerIndex)
         {
             Vector3 localPlacePos = GetBiasedLocalSnapPoint(hit, edgeBias);
             int faceId = PlacementUtils.FaceIdFromVector(localPlacePos.normalized);
             if (_blockManager.GetBlockType(hit.collider.gameObject).CanAttach(faceId)) placementPosition = hit.collider.transform.TransformPoint(localPlacePos);
+            else canAttach = false;
         }
 
-        if (PlacementUtils.GetCollisionsFromPoint(placementPosition, Vector3.one, PlacementUtils.collisionPadding, rotationReference.rotation, collisionLayer).Length > 0) { // If you try to place inside another block
+        if (!canAttach || PlacementUtils.GetCollisionsFromPoint(placementPosition, Vector3.one, PlacementUtils.collisionPadding, rotationReference.rotation, collisionLayer).Length > 0) { // If you try to place inside another block
             Collider[] surroundingCubes = PlacementUtils.GetCollisionsFromPoint(placementPosition, Vector3.one * 0.5f, Vector3.one, rotationReference.rotation, airshipLayer);
             float bestValue = float.MaxValue;
 
@@ -220,8 +225,8 @@ public class GridPlacement : MonoBehaviour
                     Vector3 tempPos = blockTransform.TransformPoint(PlacementUtils.GetOffset(placedOnBlockType.collider, PlacementUtils.FaceIdToVector(j)) * 2f);
                     Vector3 tempNormal = (tempPos - blockTransform.position).normalized;
                     float angleFactor = Vector3.Angle(tempNormal, Camera.main.transform.forward) % 180f / 180f;
-                    angleFactor = (1 - angleFactor) * closestBlockAngleWeight;
-                    float newValue = Vector3.Distance(tempPos, hit.point);
+                    angleFactor = (1 - angleFactor) * closestBlockAngleWeight + 1 * (1 - closestBlockAngleWeight);
+                    float newValue = Vector3.Distance(tempPos, hit.point) * angleFactor;
 
                     if (newValue > bestValue || PlacementUtils.GetCollisionsFromPoint(tempPos, Vector3.one, PlacementUtils.collisionPadding, blockTransform.rotation, collisionLayer).Length > 0) continue;
 
@@ -257,7 +262,7 @@ public class GridPlacement : MonoBehaviour
         Vector3 toRotationReference = (rotationReference.position - basePosition).normalized;
         int rotObjectSnappoint = PlacementUtils.CalculateLocalFaceIdFromRotation(baseRotation, toRotationReference);
 
-        if (!currentBlockType.CanAttach(rotObjectSnappoint) || PlacementUtils.GetCollisionsFromPoint(basePosition + baseRotation * (rotation * currentBlockType.collider.center), currentBlockType.collider.size, PlacementUtils.collisionPadding, baseRotation, collisionLayer).Length > 0) // Get an alternative rotation when overlapping with something
+        if (!currentBlockType.CanAttach(rotObjectSnappoint) || PlacementUtils.GetCollisionsFromPoint(baseRotation * rotation * currentBlockType.collider.center + basePosition, currentBlockType.collider.size, PlacementUtils.collisionPadding, baseRotation * rotation, collisionLayer).Length > 0) // Get an alternative rotation when overlapping with something
         {
             Vector3[] adjacentVectors = PlacementUtils.GetAdjacentVectors(hit.collider.transform.InverseTransformDirection(normal));
             if (adjacentVectors == null) return rotation * baseRotation;
@@ -266,7 +271,7 @@ public class GridPlacement : MonoBehaviour
             {
                 rotation = PlacementUtils.SafeFromToRotation(baseRotation * Vector3.down, hit.collider.transform.TransformDirection(adjacentVectors[i]), rotationReference);
                 rotObjectSnappoint = PlacementUtils.CalculateLocalFaceIdFromRotation(baseRotation, rotation * toRotationReference);
-                if (rotObjectSnappoint == 0 || PlacementUtils.GetCollisionsFromPoint(basePosition + baseRotation * (rotation * currentBlockType.collider.center), currentBlockType.collider.size, PlacementUtils.collisionPadding, rotation * baseRotation, collisionLayer).Length > 0) continue;
+                if (rotObjectSnappoint == 0 || PlacementUtils.GetCollisionsFromPoint(baseRotation * rotation * currentBlockType.collider.center + basePosition, currentBlockType.collider.size, PlacementUtils.collisionPadding, baseRotation * rotation, collisionLayer).Length > 0) continue;
                 return rotation * baseRotation;
             }
         }

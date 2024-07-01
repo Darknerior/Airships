@@ -839,8 +839,8 @@ MonoBehaviour:
   edgeBias: 0.15
   edgeAngleFactor: 0.35
   rotationBias: 0.4
-  rotationAngleFactor: 0.36
-  closestBlockAngleWeight: 0.683
+  rotationAngleFactor: 0.15
+  closestBlockAngleWeight: 0.3
   rayPadding: 2
   reach: 10
   placementLayer:
