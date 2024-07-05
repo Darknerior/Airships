@@ -47,7 +47,7 @@ public class BlockManager : MonoBehaviour
             CreateShip(new List<GameObject> { checkObject });
         }
     }
-    
+
     private void ClearFaces(GameObject clearObject)
     {
         Block block = blocks[clearObject];
@@ -246,100 +246,8 @@ public class BlockManager : MonoBehaviour
     {
         GameObject blockObject = Instantiate(GetBlockTypeFromId(blockId).blockPrefab, position, rotation);
         blockObject.layer = layer;
-        Block block = new Block() { blockId = blockId };
+        Block block = new() { blockId = blockId };
         blocks.Add(blockObject, block);
         return blockObject;
-    }
-}
-
-public struct Block
-{
-    public int blockId; // Id of this block
-    public GameObject front; // FaceId 1-6
-    public GameObject back;
-    public GameObject left;
-    public GameObject right;
-    public GameObject up;
-    public GameObject down;
-
-    public void InternalSetFace(int faceId, GameObject attachedBlock)
-    {
-        switch (faceId)
-        {
-            case 1: front = attachedBlock; break;
-            case 2: back = attachedBlock; break;
-            case 3: left = attachedBlock; break;
-            case 4: right = attachedBlock; break;
-            case 5: up = attachedBlock; break;
-            case 6: down = attachedBlock; break;
-        }
-    }
-
-    public GameObject GetFace(int faceId)
-    {
-        switch (faceId)
-        {
-            case 1: return front;
-            case 2: return back;
-            case 3: return left;
-            case 4: return right;
-            case 5: return up;
-            case 6: return down;
-            default: return null;
-        }
-    }
-
-    public void DetachObject(GameObject detachObject)
-    {
-        for (int i = 1; i <= 6; i++)
-        {
-            if (GetFace(i) == detachObject)
-            {
-                InternalSetFace(i, null);
-                return;
-            }
-        }
-    }
-}
-
-[System.Serializable]
-public struct BlockType
-{
-    public float weight; // Weight of the block
-    public GameObject blockPrefab; // The prefab for the block
-    public BoxCollider collider;
-    public Material material;
-
-    // If this block can attach on that face
-    public bool front;
-    public bool back;
-    public bool left;
-    public bool right;
-    public bool up;
-    public bool down;
-
-    public int attachmentPointCount()
-    {
-        int count = 0;
-        for (int i = 1; i <= 6; i++)
-        {
-            if (CanAttach(i)) count++;
-        }
-
-        return count;
-    }
-
-    public bool CanAttach(int faceId)
-    {
-        switch (faceId)
-        {
-            case 1: return front;
-            case 2: return back;
-            case 3: return left;
-            case 4: return right;
-            case 5: return up;
-            case 6: return down;
-            default: return false;
-        }
     }
 }

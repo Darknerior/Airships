@@ -23,6 +23,37 @@ public static class PlacementUtils
         return sideOffset;
     }
 
+    public static RaycastHit GetPaddedHit(Vector3 from, Vector3 direction, float paddingRadius, float length, LayerMask layerMask)
+    {
+        if (!Physics.Raycast(from, direction, out RaycastHit hit, Mathf.Infinity, layerMask))
+        {
+            Collider[] overlaps = Physics.OverlapCapsule(from + direction * paddingRadius, from + direction * (length - paddingRadius), paddingRadius, layerMask);
+            if (overlaps.Length > 0)
+            {
+                float closestDistance = float.MaxValue;
+
+                for (int i = 0; i < overlaps.Length; i++)
+                {
+                    Collider block = overlaps[i];
+                    Vector3 blockPosition = block.bounds.center;
+                    Vector3 camToBlock = blockPosition - from;
+                    Vector3 projectedOnRay = Vector3.Project(camToBlock, direction);
+                    Debug.DrawRay(from, projectedOnRay, Color.yellow);
+                    Vector3 lineIntersection = from + projectedOnRay;
+                    float distanceFromRay = Vector3.Distance(lineIntersection, blockPosition);
+                    float closer = Mathf.Min(closestDistance, distanceFromRay);
+                    if (closer < closestDistance && Physics.Raycast(lineIntersection, block.transform.position - lineIntersection, out RaycastHit newHit, Mathf.Infinity, layerMask))
+                    {
+                        closestDistance = closer;
+                        hit = newHit;
+                    }
+                }
+            }
+        }
+
+        return hit;
+    }
+
     public static int CalculateLocalFaceIdFromRotation(Quaternion rotation, Vector3 normal)
     {
         return FaceIdFromVector(Quaternion.Inverse(rotation) * normal);
@@ -118,12 +149,12 @@ public static class PlacementUtils
         return vectors[faceId - 1];
     }
 
-    public static Quaternion SafeFromToRotation(Vector3 fromVector, Vector3 toVector, Transform rotObject)
+    public static Quaternion SafeFromToRotation(Vector3 fromVector, Vector3 toVector)
     {
         if (Vector3.Dot(fromVector, toVector) < -0.99999f)
         {
-            Vector3 axis = Vector3.Cross(rotObject.up, fromVector).normalized;
-            if (Mathf.Approximately(axis.magnitude, 0)) axis = Vector3.Cross(rotObject.right, fromVector).normalized;
+            Vector3 axis = Vector3.Cross(toVector, fromVector).normalized;
+            if (Mathf.Approximately(axis.magnitude, 0)) return Quaternion.identity;
             return Quaternion.AngleAxis(180f, axis);
         }
         else
@@ -149,5 +180,114 @@ public static class PlacementUtils
         }
 
         return finalOverlaps.ToArray();
+    }
+
+    public static Vector3 GetBiasedLocalSnapPoint(RaycastHit hit, BoxCollider hitCollider, float bias, float angleFactor)
+    {
+        Vector4 edgeData = GetClosestEdgeData(hit, hitCollider);
+
+        Vector3 inverseEdgeDistance = edgeData;
+        float maxValue = edgeData.w;
+
+        float CloseToAngleFactor = Vector3.Angle(inverseEdgeDistance.normalized, Camera.main.transform.forward) % 180f / 180f;
+
+        if (0.5f - maxValue > bias || CloseToAngleFactor < angleFactor)
+        {
+            inverseEdgeDistance = hit.collider.transform.InverseTransformDirection(hit.normal);
+        }
+
+        return inverseEdgeDistance.normalized;
+    }
+}
+
+public struct Block
+{
+    public int blockId; // Id of this block
+    public GameObject front; // FaceId 1-6
+    public GameObject back;
+    public GameObject left;
+    public GameObject right;
+    public GameObject up;
+    public GameObject down;
+
+    public void InternalSetFace(int faceId, GameObject attachedBlock)
+    {
+        switch (faceId)
+        {
+            case 1: front = attachedBlock; break;
+            case 2: back = attachedBlock; break;
+            case 3: left = attachedBlock; break;
+            case 4: right = attachedBlock; break;
+            case 5: up = attachedBlock; break;
+            case 6: down = attachedBlock; break;
+        }
+    }
+
+    public GameObject GetFace(int faceId)
+    {
+        switch (faceId)
+        {
+            case 1: return front;
+            case 2: return back;
+            case 3: return left;
+            case 4: return right;
+            case 5: return up;
+            case 6: return down;
+            default: return null;
+        }
+    }
+
+    public void DetachObject(GameObject detachObject)
+    {
+        for (int i = 1; i <= 6; i++)
+        {
+            if (GetFace(i) == detachObject)
+            {
+                InternalSetFace(i, null);
+                return;
+            }
+        }
+    }
+}
+
+[System.Serializable]
+public struct BlockType
+{
+    public float weight; // Weight of the block
+    public GameObject blockPrefab; // The prefab for the block
+    public BoxCollider collider;
+    public Material material;
+
+    // If this block can attach on that face
+    public bool front;
+    public bool back;
+    public bool left;
+    public bool right;
+    public bool up;
+    public bool down;
+
+    public int attachmentPointCount()
+    {
+        int count = 0;
+        for (int i = 1; i <= 6; i++)
+        {
+            if (CanAttach(i)) count++;
+        }
+
+        return count;
+    }
+
+    public bool CanAttach(int faceId)
+    {
+        switch (faceId)
+        {
+            case 1: return front;
+            case 2: return back;
+            case 3: return left;
+            case 4: return right;
+            case 5: return up;
+            case 6: return down;
+            default: return false;
+        }
     }
 }
